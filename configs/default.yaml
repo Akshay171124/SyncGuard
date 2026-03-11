@@ -1,0 +1,81 @@
+# SyncGuard Configuration
+
+# Data paths
+data:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  features_dir: "data/features"
+  fakeavceleb_dir: "data/raw/FakeAVCeleb"
+  celebdf_dir: "data/raw/CelebDF-v2"
+
+# Preprocessing
+preprocessing:
+  video:
+    fps: 25
+    mouth_crop_size: 96
+    face_detection_confidence: 0.8
+    face_detection_backend: "retinaface"
+  audio:
+    sample_rate: 16000
+    target_fps: 49  # Wav2Vec native rate
+  vad:
+    threshold: 0.5
+    min_speech_duration_ms: 250
+    min_silence_duration_ms: 100
+
+# Model
+model:
+  visual_encoder:
+    name: "av_hubert"  # Options: av_hubert, resnet18, syncnet
+    embedding_dim: 256
+    freeze_pretrained: false
+  audio_encoder:
+    name: "wav2vec2"
+    model_id: "facebook/wav2vec2-base-960h"
+    layer: 9  # Subject to ablation (3, 5, 7, 9, 11)
+    embedding_dim: 256
+    freeze_pretrained: true
+  classifier:
+    name: "bilstm"  # Options: bilstm, cnn1d, statistical
+    hidden_size: 128
+    num_layers: 2
+    dropout: 0.3
+
+# Training
+training:
+  # Phase 1: Contrastive pretraining
+  pretrain:
+    epochs: 20
+    batch_size: 32
+    lr: 1.0e-4
+    weight_decay: 1.0e-5
+    scheduler: "cosine"
+    warmup_epochs: 2
+    moco_queue_size: 4096
+    temperature: 0.07
+    temperature_range: [0.01, 0.5]
+  # Phase 2: Fine-tuning on FakeAVCeleb
+  finetune:
+    epochs: 30
+    batch_size: 16
+    lr: 5.0e-5
+    weight_decay: 1.0e-4
+    scheduler: "cosine"
+    warmup_epochs: 3
+    # Loss weights
+    gamma: 0.5   # Temporal consistency loss weight
+    delta: 1.0   # Classification loss weight
+    # Hard negative mining
+    hard_negative_ratio: 0.2
+    hard_negative_anneal_epochs: 10
+
+# Evaluation
+evaluation:
+  metrics: ["auc_roc", "eer", "pauc_fpr01"]
+  test_sets: ["fakeavceleb", "celebdf", "dfdc", "wavlip_adversarial"]
+
+# Hardware
+hardware:
+  device: "auto"  # auto, cuda, mps, cpu
+  num_workers: 4
+  pin_memory: true
