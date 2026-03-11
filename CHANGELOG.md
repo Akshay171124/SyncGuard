@@ -2,6 +2,13 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [0.1.1] - 2026-03-11
+
+### Added
+- `docs/Final_Project_Proposal.md` — Complete finalized project proposal with all decided architecture, datasets, evaluation plan, schedule, and references
+
+---
+
 ## [0.1.0] - 2026-03-11
 
 ### Added
