@@ -141,4 +141,41 @@ N/A — documentation phase, no metrics
 
 ---
 
+## Mar 14, 2026 — Loss Functions & Training Dataset (Task A3)
+
+**Owner:** Akshay
+**Phase:** Implementation
+
+### What I Did
+- Implemented all loss functions in `src/training/losses.py`: MoCoQueue (FIFO memory bank), InfoNCELoss (frame-level with MoCo negatives, learnable τ), TemporalConsistencyLoss (L2 on first derivatives, real-only), CombinedLoss (weighted sum of all three), PretrainLoss (InfoNCE-only wrapper).
+- Implemented training dataset in `src/training/dataset.py`: SyncGuardDataset (loads preprocessed features), SyncGuardBatch (collated dataclass), collate_syncguard (variable-length padding with masks), build_dataloaders (speaker-disjoint splits), hard negative mining (same-speaker different-clip).
+- Fixed MoCo queue test assertion — queue is capped at `queue_size`, not `B*T`.
+- Updated `src/training/__init__.py` with all exports.
+
+### Results
+- **InfoNCE loss:** 5.64 (random embeddings, τ=0.07, queue_size=128) — matches expected range for random inputs
+- **Temporal consistency:** 4.04 (random embeddings) — non-zero for random, exactly 0.0 for all-fake batch ✓
+- **Combined loss:** total=8.40 (nce=5.64 + 0.5*temp=2.02 + cls=0.74) — component weights verified ✓
+- **Temperature gradient:** Confirmed learnable τ receives gradients ✓
+- **Queue no-grad:** Confirmed MoCo queue does not require gradients ✓
+- **Dataset:** 12 synthetic samples loaded, variable-length collation correct, padding masks verified ✓
+- **Hard negative mining:** Same-speaker different-clip selection working ✓
+
+### Observations
+- MoCo queue correctly caps at `queue_size` when batch exceeds capacity — important to test with realistic queue sizes (4096) during training
+- InfoNCE loss ~5.6 for random embeddings with 128 negatives is reasonable (log(128) ≈ 4.85)
+- Temporal consistency loss correctly returns 0.0 when `is_real` mask is all-False
+- Variable-length collation pads to max length in batch — memory efficient vs global max padding
+
+### Decision
+- Task A3 complete. Next: Task A4 — training loops (`src/training/pretrain.py` and `src/training/finetune.py`)
+- Training loops will wire together the model, losses, dataset, optimizer, scheduler, and checkpointing
+
+### Artifacts
+- `src/training/losses.py` — All loss functions + factory functions
+- `src/training/dataset.py` — Dataset + collation + DataLoader factory
+- `src/training/__init__.py` — Module exports
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->

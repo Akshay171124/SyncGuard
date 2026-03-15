@@ -353,11 +353,11 @@ Data Download ──→ Preprocessing ──→ Phase 1 Pretrain ──→ Phase
 - [x] `src/models/classifier.py` — Bi-LSTM temporal classifier *(completed Mar 14)*
 - [x] `src/models/syncguard.py` — Full model integration *(completed Mar 14)*
 - [x] `src/models/__init__.py` — Module exports *(completed Mar 14)*
-- [ ] `src/training/losses.py` — InfoNCE, temporal consistency, BCE, combined
-- [ ] `src/training/dataset.py` — Training dataset + hard negative mining
+- [x] `src/training/losses.py` — InfoNCE, temporal consistency, BCE, combined *(completed Mar 14)*
+- [x] `src/training/dataset.py` — Training dataset + hard negative mining *(completed Mar 14)*
 - [ ] `src/training/pretrain.py` — Phase 1 contrastive pretraining loop
 - [ ] `src/training/finetune.py` — Phase 2 fine-tuning loop
-- [ ] `src/training/__init__.py` — Module exports
+- [x] `src/training/__init__.py` — Module exports *(completed Mar 14)*
 - [ ] `src/evaluation/metrics.py` — AUC-ROC, EER, pAUC computation
 - [ ] `src/evaluation/evaluate.py` — Evaluation runner
 - [ ] `src/evaluation/visualize.py` — Sync-score plots, ROC curves, ablation charts
