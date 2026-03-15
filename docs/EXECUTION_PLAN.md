@@ -348,11 +348,11 @@ Data Download ──→ Preprocessing ──→ Phase 1 Pretrain ──→ Phase
 ## File Deliverables Checklist
 
 ### Code (`src/`)
-- [ ] `src/models/visual_encoder.py` — AV-HuBERT wrapper + projection
-- [ ] `src/models/audio_encoder.py` — Wav2Vec 2.0 wrapper + projection
-- [ ] `src/models/classifier.py` — Bi-LSTM temporal classifier
-- [ ] `src/models/syncguard.py` — Full model integration
-- [ ] `src/models/__init__.py` — Module exports
+- [x] `src/models/visual_encoder.py` — AV-HuBERT wrapper + projection *(completed Mar 14)*
+- [x] `src/models/audio_encoder.py` — Wav2Vec 2.0 wrapper + projection *(completed Mar 14)*
+- [x] `src/models/classifier.py` — Bi-LSTM temporal classifier *(completed Mar 14)*
+- [x] `src/models/syncguard.py` — Full model integration *(completed Mar 14)*
+- [x] `src/models/__init__.py` — Module exports *(completed Mar 14)*
 - [ ] `src/training/losses.py` — InfoNCE, temporal consistency, BCE, combined
 - [ ] `src/training/dataset.py` — Training dataset + hard negative mining
 - [ ] `src/training/pretrain.py` — Phase 1 contrastive pretraining loop
