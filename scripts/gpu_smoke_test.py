@@ -13,8 +13,12 @@ Usage:
 
 import argparse
 import logging
+import os
 import sys
 import time
+
+# Add project root to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 import yaml
