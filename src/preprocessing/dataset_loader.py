@@ -76,10 +76,12 @@ class FakeAVCelebLoader:
         for dirname, (category, label) in category_dirs.items():
             dir_path = self.root / dirname
             for video_file in sorted(dir_path.rglob("*.mp4")):
-                # Try to extract speaker ID from path
-                # Typical: FakeAVCeleb/RealVideo-RealAudio/<speaker_id>/video.mp4
+                # Extract speaker ID from path
+                # Structure may be flat: <category>/<speaker_id>/video.mp4
+                # Or nested: <category>/<ethnicity>/<gender>/<speaker_id>/video.mp4
                 parts = video_file.relative_to(dir_path).parts
-                speaker_id = parts[0] if len(parts) > 1 else ""
+                # Speaker ID is always the directory containing the video
+                speaker_id = parts[-2] if len(parts) >= 2 else ""
 
                 samples.append(VideoSample(
                     video_path=str(video_file),
