@@ -151,9 +151,21 @@ class PreprocessingPipeline:
             List of result dicts
         """
         results = []
+        skipped = 0
         total = len(samples)
 
         for i, sample in enumerate(samples):
+            # Skip already-processed samples (resume support)
+            video_id = Path(sample.video_path).stem
+            category = sample.category
+            expected_dir = self.processed_dir / sample.dataset / category / video_id
+            if (expected_dir / "metadata.json").exists():
+                with open(expected_dir / "metadata.json") as f:
+                    result = json.load(f)
+                results.append(result)
+                skipped += 1
+                continue
+
             logger.info(f"Processing [{i+1}/{total}]: {sample.video_path}")
             try:
                 result = self.process_single_video(sample)
@@ -166,7 +178,10 @@ class PreprocessingPipeline:
                 })
 
             if (i + 1) % 100 == 0:
-                logger.info(f"Progress: {i+1}/{total} videos processed")
+                logger.info(f"Progress: {i+1}/{total} videos processed ({skipped} skipped)")
+
+        if skipped:
+            logger.info(f"Skipped {skipped} already-processed samples")
 
         # Save manifest
         manifest_path = self.processed_dir / "manifest.json"
