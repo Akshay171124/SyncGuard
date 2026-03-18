@@ -2,6 +2,18 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [0.6.0] - 2026-03-18
+
+### Added
+- Evaluation framework (`src/evaluation/`):
+  - `metrics.py` — AUC-ROC (sklearn), EER (from ROC curve), pAUC at FPR<0.1 and FPR<0.05, per-category FakeAVCeleb breakdown (RV-RA vs each fake category), bootstrapped 95% CI
+  - `evaluate.py` — Inference runner: loads checkpoint, runs model on test DataLoaders, collects predictions + sync-score statistics, saves JSON results + .npz predictions per test set
+  - `visualize.py` — Publication-quality plots (300 DPI PNG + PDF): ROC curves (single, multi-dataset, per-category), sync-score temporal profiles (real vs fake), sync-score distribution histograms, training loss curves (pretrain + finetune), ablation bar charts. Consistent color palette per plotting standards
+  - `__init__.py` — Full module exports
+- All tested on CPU with synthetic data — metrics and all 7 plot types verified
+
+---
+
 ## [0.5.0] - 2026-03-15
 
 ### Added
