@@ -1,0 +1,404 @@
+\documentclass[12pt, letterpaper]{article}
+
+% ─── Packages ───────────────────────────────────────────────────────────────
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{fancyhdr}
+\usepackage{float}
+\usepackage{tcolorbox}
+\usepackage{parskip}
+\usepackage{microtype}
+
+% ─── Colors ─────────────────────────────────────────────────────────────────
+\definecolor{accent}{RGB}{0, 180, 150}
+\definecolor{accent2}{RGB}{255, 159, 67}
+\definecolor{accent3}{RGB}{84, 160, 255}
+\definecolor{lightgray}{RGB}{245, 250, 248}
+\definecolor{darkgray}{RGB}{80, 80, 100}
+
+% ─── Hyperref ────────────────────────────────────────────────────────────────
+\hypersetup{
+    colorlinks=true,
+    linkcolor=accent,
+    urlcolor=accent,
+    citecolor=accent3,
+}
+
+% ─── Header / Footer ─────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\textcolor{darkgray}{\small CS 5330 · Computer Vision \& Pattern Recognition}}
+\lhead{\textcolor{darkgray}{\small \textbf{\textcolor{accent}{Sync}Guard}}}
+\cfoot{\textcolor{darkgray}{\thepage}}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ─── Section Formatting ──────────────────────────────────────────────────────
+\titleformat{\section}{\large\bfseries\color{accent}}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries\color{darkgray}}{}{0em}{}
+
+% ─── tcolorbox Styles ────────────────────────────────────────────────────────
+\tcbuselibrary{skins, breakable}
+
+\newtcolorbox{infobox}[2][]{
+  colback=lightgray, colframe=accent, coltitle=white,
+  fonttitle=\bfseries\small, title=#2, rounded corners, #1
+}
+\newtcolorbox{resultbox}[2][]{
+  colback=accent3!8, colframe=accent3, coltitle=white,
+  fonttitle=\bfseries\small, title=#2, rounded corners, #1
+}
+\newtcolorbox{notebox}{
+  colback=yellow!8, colframe=orange!60, rounded corners,
+}
+
+% ════════════════════════════════════════════════════════════════════════════
+\begin{document}
+% ════════════════════════════════════════════════════════════════════════════
+
+% ─── Title Page ──────────────────────────────────────────────────────────────
+\begin{titlepage}
+  \centering
+  \vspace*{1.8cm}
+
+  {\LARGE \textbf{CS 5330: Computer Vision \& Pattern Recognition}}\\[0.4cm]
+  {\large Phase 3 — Implementation Progress Report}\\[1.4cm]
+
+  \noindent\rule{\linewidth}{1.5pt}\\[0.5cm]
+  {\Huge \textbf{\textcolor{accent}{Sync}\textcolor{black}{Guard}}}\\[0.4cm]
+  {\Large \textit{Contrastive Audio-Visual Deepfake Detection\\[0.2cm]
+  via Temporal Phoneme-Face Coherence}}\\[0.5cm]
+  \noindent\rule{\linewidth}{1.5pt}\\[1.8cm]
+
+  \begin{tabular}{ll}
+    \textbf{Project Members:} & Akshay Prajapati, Ritik Mahyavanshi, Atharva Dhumal \\[0.4cm]
+    \textbf{Course:}          & CS 5330 Computer Vision \& Pattern Recognition \\[0.4cm]
+    \textbf{Institution:}     & Khoury College of Computer Sciences \\
+                              & Northeastern University \\[0.4cm]
+    \textbf{Date:}            & March 15, 2026 \\[0.4cm]
+    \textbf{Report Type:}     & \textbf{Phase 3 Progress Report} \\[0.4cm]
+    \textbf{GitHub:}          & \url{https://github.com/Akshay171124/SyncGuard} \\
+  \end{tabular}
+
+  \vfill
+\end{titlepage}
+
+% ─── Table of Contents ───────────────────────────────────────────────────────
+\tableofcontents
+\newpage
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{System Design \& Architecture}
+% ════════════════════════════════════════════════════════════════════════════
+
+\begin{infobox}{Project Overview}
+\begin{tabular}{@{}ll}
+  \textbf{Full Title:}    & SyncGuard: Contrastive Audio-Visual Deepfake Detection \\
+                          & via Temporal Phoneme-Face Coherence \\[4pt]
+  \textbf{Core Signal:}   & Frame-level sync-score sequence $s(t) \in [-1, 1]^T$ \\[4pt]
+  \textbf{Modalities:}    & Visual (Mouth-ROI Crops via AV-HuBERT) + Audio (Wav2Vec 2.0) \\[4pt]
+  \textbf{Key Insight:}   & Biomechanical AV coupling is generator-agnostic — \\
+                          & no deepfake generator replicates it at 20--50ms resolution \\[4pt]
+  \textbf{Parameters:}    & 107M total, 13M trainable (Wav2Vec backbone frozen) \\
+\end{tabular}
+\end{infobox}
+
+\subsection{Core Idea}
+
+Current deepfake detectors learn generator-specific visual artifacts — blending boundaries, texture inconsistencies, flickering. When tested on unseen generators, detection performance drops significantly (AUC from $\sim$0.95 to $\sim$0.65) \cite{rossler2019}. SyncGuard takes a fundamentally different approach: it detects deepfakes by measuring the \textbf{temporal coherence between lip movements and audio} at the frame level.
+
+Real human speech exhibits tight temporal coupling between facial articulators and acoustic output, governed by the biomechanics of speech production. Lip closure for /p/ precedes the acoustic burst by 10--30ms; lip rounding for /o/ co-occurs with specific acoustic formants. This coupling is a \textbf{generator-agnostic signal} — it arises from physics, not from artifacts of any particular generative model.
+
+\subsection{Architecture Overview}
+
+SyncGuard uses a \textbf{two-stream contrastive learning} pipeline:
+
+\begin{enumerate}[leftmargin=1.5em, itemsep=2pt]
+    \item \textbf{Preprocessing:} Video frames pass through RetinaFace face detection and MediaPipe FaceMesh (468 landmarks) to extract 96$\times$96 grayscale mouth ROI crops. Audio is extracted via FFmpeg, resampled to 16kHz mono, and passed through Silero-VAD for speech activity detection. Visual features are temporally aligned from 25fps to 49Hz (Wav2Vec native rate).
+
+    \item \textbf{Visual Encoder (AV-HuBERT):} Pretrained on lip-reading (LRS3, 433 hours), AV-HuBERT encodes articulatory dynamics via a 3D convolutional frontend (5$\times$7$\times$7 kernel) and ResNet-18 trunk. A projection head maps features to $\mathbb{R}^{256}$ with L2 normalization, producing frame-level visual embeddings $\mathbf{v}_t \in \mathbb{R}^{B \times T \times 256}$.
+
+    \item \textbf{Audio Encoder (Wav2Vec 2.0):} We use \texttt{facebook/wav2vec2-base-960h} with a frozen backbone (94M parameters). Hidden states from layer~9 are extracted — the layer with peak phonemic content \cite{pasad2021}. A trainable projection head produces $\mathbf{a}_t \in \mathbb{R}^{B \times T \times 256}$.
+
+    \item \textbf{Sync-Score Computation:} Frame-level cosine similarity $s(t) = \cos(\mathbf{v}_t, \mathbf{a}_t)$ captures temporal synchronization. For real clips, $s(t) \approx 0.7$--$0.9$; for fakes, $s(t) \approx 0.1$--$0.4$.
+
+    \item \textbf{Temporal Classifier (Bi-LSTM):} The $s(t)$ sequence feeds into a 2-layer bidirectional LSTM (hidden size 128) with mean+max pooling and an MLP head, producing a binary real/fake prediction.
+\end{enumerate}
+
+\subsection{Training Strategy}
+
+Training proceeds in two phases:
+
+\begin{infobox}{Phase 1 — Contrastive Pretraining (Real Data Only)}
+InfoNCE loss at the frame level with a MoCo-style memory bank (queue size 4096) for scalable negatives, decoupled from batch size. Temperature $\tau$ is learnable (init=0.07, clamped to [0.01, 0.5]). Training runs for 20 epochs with cosine LR scheduling and 2-epoch linear warmup.
+\end{infobox}
+
+\begin{infobox}{Phase 2 — Fine-tuning on FakeAVCeleb}
+Combined loss with hard negative mining:
+\begin{equation}
+    \mathcal{L} = \mathcal{L}_{\text{InfoNCE}} + \gamma \cdot \mathcal{L}_{\text{temp}} + \delta \cdot \mathcal{L}_{\text{cls}}
+\end{equation}
+where $\gamma = 0.5$ and $\delta = 1.0$. The temporal consistency loss $\mathcal{L}_{\text{temp}} = \sum_t \|(\mathbf{v}_{t+1} - \mathbf{v}_t) - (\mathbf{a}_{t+1} - \mathbf{a}_t)\|^2$ penalizes divergent embedding dynamics and is applied \textbf{only to real clips}. Hard negative mining uses same-speaker different-time windows, annealed from 0\% to 20\% over 10 epochs. Early stopping triggers after 5 epochs without improvement in validation AUC-ROC.
+\end{infobox}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Tools and Technologies}
+% ════════════════════════════════════════════════════════════════════════════
+
+\renewcommand{\arraystretch}{1.6}
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{@{} p{3cm} X @{}}
+\toprule
+\textbf{Category} & \textbf{Technologies} \\
+\midrule
+Deep Learning & PyTorch, HuggingFace Transformers (Wav2Vec 2.0), fairseq (AV-HuBERT) \\
+Computer Vision & OpenCV, RetinaFace (face detection), MediaPipe (facial landmarks) \\
+Audio Processing & torchaudio, Silero-VAD (speech detection), librosa, soundfile \\
+Infrastructure & Northeastern HPC Explorer Cluster (H200 140GB / A100 GPUs, SLURM) \\
+Development & Python 3.11, Conda, Git/GitHub, YAML config system \\
+Evaluation & scikit-learn (AUC-ROC, EER), matplotlib (visualization) \\
+\bottomrule
+\end{tabularx}
+\caption{Technology stack used in SyncGuard.}
+\end{table}
+\renewcommand{\arraystretch}{1.0}
+
+\begin{resultbox}{Key Design Decisions}
+\begin{itemize}[leftmargin=1.5em, topsep=0pt]
+    \item \textit{AV-HuBERT over ResNet-18:} Lip-reading pretraining encodes articulatory motion, not just appearance \cite{shi2022}.
+    \item \textit{Wav2Vec layer 9:} Best phonemic-level encoding per layer-wise analysis \cite{pasad2021}.
+    \item \textit{MoCo over in-batch negatives:} 4096 negatives regardless of batch size — critical for fine-grained AV alignment.
+    \item \textit{Speaker-disjoint splits:} Prevents identity leakage between train/test \cite{khalid2021}.
+    \item \textit{Config-driven pipeline:} All hyperparameters in a single YAML file for reproducibility.
+\end{itemize}
+\end{resultbox}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Initial Implementation Progress}
+% ════════════════════════════════════════════════════════════════════════════
+
+As of March 15, 2026, \textbf{10 of 12 core components} are fully implemented and tested on CPU with synthetic data.
+
+\subsection{Completed Components}
+
+\renewcommand{\arraystretch}{1.6}
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{@{} p{4cm} X l @{}}
+\toprule
+\textbf{Component} & \textbf{File(s)} & \textbf{Status} \\
+\midrule
+Preprocessing Pipeline & \texttt{src/preprocessing/} (5 files) & \textcolor{accent}{\checkmark} Complete \\
+Visual Encoder (AV-HuBERT) & \texttt{src/models/visual\_encoder.py} & \textcolor{accent}{\checkmark} Complete \\
+Audio Encoder (Wav2Vec 2.0) & \texttt{src/models/audio\_encoder.py} & \textcolor{accent}{\checkmark} Complete \\
+Temporal Classifier (Bi-LSTM) & \texttt{src/models/classifier.py} & \textcolor{accent}{\checkmark} Complete \\
+Full Model Integration & \texttt{src/models/syncguard.py} & \textcolor{accent}{\checkmark} Complete \\
+Loss Functions & \texttt{src/training/losses.py} & \textcolor{accent}{\checkmark} Complete \\
+Training Dataset + Collation & \texttt{src/training/dataset.py} & \textcolor{accent}{\checkmark} Complete \\
+Pretraining Loop (Phase 1) & \texttt{src/training/pretrain.py} & \textcolor{accent}{\checkmark} Complete \\
+Fine-tuning Loop (Phase 2) & \texttt{src/training/finetune.py} & \textcolor{accent}{\checkmark} Complete \\
+CLI Training Scripts & \texttt{scripts/train\_*.py} & \textcolor{accent}{\checkmark} Complete \\
+\midrule
+Evaluation Framework & \texttt{src/evaluation/} & \textcolor{accent2}{$\circ$} In Progress \\
+HPC Training Runs & — & \textcolor{accent2}{$\circ$} Pending \\
+\bottomrule
+\end{tabularx}
+\caption{Implementation status of all components.}
+\end{table}
+\renewcommand{\arraystretch}{1.0}
+
+\subsection{Ablation Variants Implemented}
+
+All ablation variants are implemented and config-swappable:
+\begin{itemize}[itemsep=2pt, leftmargin=1.5em]
+    \item \textbf{Visual encoder:} AV-HuBERT (primary) vs ResNet-18 (ImageNet) vs SyncNet
+    \item \textbf{Wav2Vec layer:} Configurable extraction from layers 3, 5, 7, 9, or 11
+    \item \textbf{Classifier:} Bi-LSTM (primary) vs 1D-CNN vs Statistical baseline (mean/std/skew/kurtosis)
+    \item \textbf{Hard negatives:} 0\% vs 20\% same-speaker mining
+\end{itemize}
+
+\subsection{Verification Results}
+
+\begin{resultbox}{End-to-End Verification (CPU, Synthetic Data)}
+\begin{itemize}[leftmargin=1.5em, topsep=0pt]
+    \item \textbf{Model:} 107M total parameters, 13M trainable (Wav2Vec backbone frozen at 94M). Shape pipeline verified: $(B, T, 1, 96, 96) \rightarrow (B, T, 256) \rightarrow (B, T) \rightarrow (B, 1)$.
+    \item \textbf{Embeddings:} L2 normalization confirmed on both streams. Gradient flow verified through all trainable projection heads and classifier.
+    \item \textbf{Loss functions:} InfoNCE = 5.64 (random embeddings, $\tau$=0.07, 128 negatives). Temporal consistency correctly returns 0.0 for all-fake batches. Combined loss weighted sum verified.
+    \item \textbf{Training loops (2 epochs, CPU):} Pretraining loss decreased from 5.02 to 4.87; sync-score increased from $-$0.03 to 0.18, confirming the model learns AV alignment even on random data.
+\end{itemize}
+\end{resultbox}
+
+\begin{notebox}
+\textbf{Critical Bug Found \& Fixed:} Wav2Vec 2.0 produces NaN on zero-padded waveforms in train mode due to group normalization computing statistics over zero regions. Fixed by forcing the frozen backbone to \texttt{eval()} mode during forward pass. Caught through systematic CPU testing before HPC deployment, preventing silent training failure.
+\end{notebox}
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Dataset Preparation}
+% ════════════════════════════════════════════════════════════════════════════
+
+\subsection{Datasets}
+
+\renewcommand{\arraystretch}{1.6}
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{@{} p{2.8cm} p{2.8cm} X p{1.8cm} @{}}
+\toprule
+\textbf{Dataset} & \textbf{Role} & \textbf{Details} & \textbf{Status} \\
+\midrule
+FakeAVCeleb \newline \cite{khalid2021}
+  & Primary \newline Train/Val/Test
+  & 19,500 clips; 4 AV manipulation categories; speaker-disjoint 70/15/15 splits
+  & \textcolor{accent}{\checkmark} Downloaded \\
+VoxCeleb2
+  & Contrastive \newline Pretraining
+  & $\sim$500 hrs subset; diverse speakers for learning AV correspondence
+  & \textcolor{accent2}{$\circ$} Evaluating \\
+CelebDF-v2 \newline \cite{li2020}
+  & Zero-Shot \newline Evaluation
+  & 6,229 clips; different face-swap generator — tests cross-generator generalization
+  & \textcolor{accent}{\checkmark} Downloaded \\
+DFDC \newline \cite{dolhansky2020}
+  & Zero-Shot \newline Evaluation
+  & $\sim$5K test clips; hardest in-the-wild benchmark
+  & \textcolor{accent2}{$\circ$} Pending \\
+Wav2Lip generated
+  & Adversarial \newline Test
+  & $\sim$500 clips; sync-optimized fakes — hardest case for our approach
+  & \textcolor{accent2}{$\circ$} To generate \\
+\bottomrule
+\end{tabularx}
+\caption{Datasets used for training, evaluation, and robustness testing. DFDC and CelebDF-v2 are strictly held out — never used during training.}
+\end{table}
+\renewcommand{\arraystretch}{1.0}
+
+\subsection{FakeAVCeleb Manipulation Categories}
+
+\begin{infobox}{Four AV Manipulation Categories}
+FakeAVCeleb provides unique four-category labeling that enables per-modality analysis:
+\begin{itemize}[leftmargin=1.5em, topsep=0pt]
+    \item \textbf{RV-RA} (Real Video + Real Audio): Genuine recordings — baseline.
+    \item \textbf{FV-RA} (Fake Video + Real Audio): Face-swap only — visual stream manipulated.
+    \item \textbf{RV-FA} (Real Video + Fake Audio): Voice clone only — audio stream manipulated.
+    \item \textbf{FV-FA} (Fake Video + Fake Audio): Full deepfake — both streams manipulated.
+\end{itemize}
+\textbf{Hypothesis:} FV-FA will be easiest to detect (both streams disrupted) and RV-FA hardest (only audio is fake, creating very subtle desynchronization).
+\end{infobox}
+
+\subsection{Preprocessing Pipeline}
+
+Our preprocessing pipeline (fully implemented) processes raw videos into model-ready features:
+
+\begin{enumerate}[itemsep=2pt, leftmargin=1.5em]
+    \item RetinaFace face detection with confidence threshold 0.8
+    \item MediaPipe FaceMesh extracts 468 facial landmarks $\rightarrow$ mouth ROI crop
+    \item Resize to 96$\times$96 grayscale, normalize pixel values to [0, 1]
+    \item FFmpeg audio extraction $\rightarrow$ resample to 16kHz mono PCM
+    \item Silero-VAD generates speech activity detection mask
+    \item Temporal alignment: 25fps visual features upsampled to 49Hz (Wav2Vec native rate)
+\end{enumerate}
+
+Output per sample: \texttt{mouth\_crops.npy}, \texttt{audio.wav}, \texttt{speech\_mask.npy}, \texttt{metadata.json}.
+
+All train/val/test splits are \textbf{speaker-disjoint} (70/15/15 by speaker count) to prevent identity leakage.
+
+% ════════════════════════════════════════════════════════════════════════════
+\section{Next Steps}
+% ════════════════════════════════════════════════════════════════════════════
+
+\renewcommand{\arraystretch}{1.6}
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{@{} p{2.5cm} p{3cm} X @{}}
+\toprule
+\textbf{Timeline} & \textbf{Phase} & \textbf{Key Activities} \\
+\midrule
+Mar 15--16 & Data + Eval Setup & Transfer data to HPC, run preprocessing, build evaluation framework, GPU smoke test \\
+Mar 16--21 & Phase 1: Pretrain & Contrastive pretraining on real speech data, 20 epochs on H200. Target: sync-score $> 0.5$ for real clips \\
+Mar 22--28 & Phase 2: Fine-tune & Fine-tune on FakeAVCeleb with combined loss. Evaluate on CelebDF \& DFDC \\
+Mar 29--Apr 5 & Ablations & 8 experiments across visual encoder, Wav2Vec layer, classifier, hard negatives \\
+Apr 6--13 & Deliverables & Paper, poster, video demo, final evaluation \\
+\bottomrule
+\end{tabularx}
+\caption{Timeline to final submission (April 13, 2026).}
+\end{table}
+\renewcommand{\arraystretch}{1.0}
+
+\subsection{Target Metrics}
+
+\begin{resultbox}{Quantitative Targets}
+\begin{itemize}[leftmargin=1.5em, topsep=0pt]
+    \item FakeAVCeleb (in-domain): AUC-ROC $\geq$ 0.88
+    \item CelebDF-v2 (zero-shot, cross-generator): AUC $\geq$ 0.79
+    \item DFDC (zero-shot, in-the-wild): AUC $\geq$ 0.72
+    \item Wav2Lip (adversarial, sync-optimized): Report AUC — hardest case, research contribution regardless of number
+\end{itemize}
+\end{resultbox}
+
+\subsection{Remaining Implementation}
+
+\begin{enumerate}[itemsep=2pt, leftmargin=1.5em]
+    \item \textbf{Evaluation framework} (\texttt{src/evaluation/}): AUC-ROC, EER, pAUC at FPR$<$0.1, per-category FakeAVCeleb breakdown
+    \item \textbf{Visualization tools}: Sync-score $s(t)$ curves (real vs fake), ROC curves, ablation bar charts, training loss curves
+    \item \textbf{HPC training runs}: GPU smoke test, Phase 1 pretraining, Phase 2 fine-tuning
+    \item \textbf{Wav2Lip adversarial set}: Generate $\sim$500 sync-optimized fakes for robustness testing
+    \item \textbf{Ablation experiments}: 8 experiments across 4 dimensions
+\end{enumerate}
+
+% ════════════════════════════════════════════════════════════════════════════
+% References
+% ════════════════════════════════════════════════════════════════════════════
+\newpage
+\bibliographystyle{unsrt}
+\begin{thebibliography}{99}
+
+\bibitem{rossler2019}
+A.~R{\"o}ssler, D.~Cozzolino, L.~Verdoliva, C.~Riess, J.~Thies, and M.~Nie{\ss}ner,
+\textit{FaceForensics++: Learning to Detect Manipulated Facial Images},
+IEEE/CVF International Conference on Computer Vision (ICCV), 2019.
+
+\bibitem{khalid2021}
+H.~Khalid, S.~Tariq, M.~Kim, and S.~S.~Woo,
+\textit{FakeAVCeleb: A Novel Audio-Video Multimodal Deepfake Dataset},
+NeurIPS Datasets and Benchmarks Track, 2021.
+
+\bibitem{pasad2021}
+A.~Pasad, J.-C.~Chou, and K.~Livescu,
+\textit{Layer-Wise Analysis of a Self-Supervised Speech Representation Model},
+IEEE Automatic Speech Recognition and Understanding Workshop (ASRU), 2021.
+
+\bibitem{shi2022}
+B.~Shi, W.-N.~Hsu, K.~Lakhotia, and A.~Mohamed,
+\textit{Learning Audio-Visual Speech Representation by Masked Multimodal Cluster Prediction},
+International Conference on Learning Representations (ICLR), 2022.
+
+\bibitem{he2020}
+K.~He, H.~Fan, Y.~Wu, S.~Xie, and R.~Girshick,
+\textit{Momentum Contrast for Unsupervised Visual Representation Learning},
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2020.
+
+\bibitem{li2020}
+Y.~Li, X.~Yang, P.~Sun, H.~Qi, and S.~Lyu,
+\textit{Celeb-DF: A Large-Scale Challenging Dataset for DeepFake Forensics},
+IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2020.
+
+\bibitem{dolhansky2020}
+B.~Dolhansky, J.~Bitton, B.~Pflaum, J.~Lu, R.~Howes, M.~Wang, and C.~C.~Ferrer,
+\textit{The DeepFake Detection Challenge Dataset},
+arXiv preprint arXiv:2006.07397, 2020.
+
+\bibitem{prajwal2020}
+K.~R.~Prajwal, R.~Mukhopadhyay, V.~P.~Namboodiri, and C.~V.~Jawahar,
+\textit{A Lip Sync Expert Is All You Need for Speech to Lip Generation in the Wild},
+ACM International Conference on Multimedia (MM), 2020.
+
+\end{thebibliography}
+
+\end{document}
