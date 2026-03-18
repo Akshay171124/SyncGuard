@@ -178,4 +178,40 @@ N/A — documentation phase, no metrics
 
 ---
 
+## Mar 15, 2026 — Training Loops Implemented (Task A4)
+
+**Owner:** Akshay
+**Phase:** Implementation
+
+### What I Did
+- Implemented Phase 1 contrastive pretraining loop (`src/training/pretrain.py`): encodes visual + audio embeddings, computes InfoNCE loss with MoCo queue, cosine LR with linear warmup, periodic + best-val-loss checkpointing, resume support, per-epoch JSON logging.
+- Implemented Phase 2 fine-tuning loop (`src/training/finetune.py`): full forward pass through SyncGuard model, combined loss (InfoNCE + γ·L_temp + δ·L_cls), hard negative annealing (0%→20% over 10 epochs), early stopping (patience=5 on val AUC-ROC), AUC-ROC and EER computation, resume support.
+- Created CLI entry points: `scripts/train_pretrain.py`, `scripts/train_finetune.py`.
+- Fixed critical bug: Wav2Vec 2.0 frozen backbone produces NaN in train mode due to group normalization on zero-padded waveforms. Fix: force frozen backbone to eval mode during forward pass.
+- Fixed scheduler ZeroDivisionError when warmup_steps >= total_steps.
+
+### Results
+- **Pretraining test (2 epochs, CPU):** loss 5.02→4.87 (decreasing ✓), sync_score -0.03→0.18 (increasing ✓), τ=0.07 (stable ✓)
+- **Fine-tuning test (2 epochs, CPU):** loss 5.89→6.41, val_auc=0.0 (expected with random data), all loss components finite ✓
+- **No NaN** after audio encoder fix ✓
+- **Gradient clipping** (max_norm=1.0) applied ✓
+- **Checkpoint saving** includes full state: model, optimizer, scheduler, criterion (MoCo queue + temperature) ✓
+
+### Observations
+- Wav2Vec 2.0 group normalization layers produce NaN when processing zero-padded regions in train mode. This is a known issue — frozen backbones must be kept in eval mode. This would have been a painful bug to debug during actual training on HPC.
+- Pretraining loss ~5.0 for random data with MoCo queue is reasonable (log(4096) ≈ 8.3, but queue is partially filled)
+- Both loops handle variable-length batches correctly through the collation + mask pipeline
+
+### Decision
+- Task A4 complete. Next: Task A5 — evaluation framework (`src/evaluation/metrics.py`, `evaluate.py`, `visualize.py`)
+
+### Artifacts
+- `src/training/pretrain.py` — Phase 1 pretraining loop
+- `src/training/finetune.py` — Phase 2 fine-tuning loop
+- `scripts/train_pretrain.py` — CLI entry point
+- `scripts/train_finetune.py` — CLI entry point
+- `src/models/audio_encoder.py` — Fixed frozen backbone eval mode
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->

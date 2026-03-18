@@ -2,6 +2,22 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [0.5.0] - 2026-03-15
+
+### Added
+- Training loops (`src/training/pretrain.py`, `src/training/finetune.py`):
+  - Phase 1 contrastive pretraining: InfoNCE loss only, cosine LR with warmup, checkpoint saving (periodic + best val loss), resume support
+  - Phase 2 fine-tuning: combined loss (InfoNCE + temporal + BCE), hard negative annealing (0%→20% over 10 epochs), early stopping (patience=5 on val AUC), AUC-ROC and EER computation
+  - Both loops: gradient clipping (max_norm=1.0), per-epoch JSON logging, full state checkpointing (model + optimizer + scheduler + criterion)
+- CLI scripts: `scripts/train_pretrain.py`, `scripts/train_finetune.py`
+- Updated `src/training/__init__.py` with training loop exports
+
+### Fixed
+- Wav2Vec 2.0 NaN in train mode: frozen backbone now forced to eval mode to prevent group normalization NaN on zero-padded waveforms
+- Cosine LR scheduler ZeroDivisionError when warmup_steps >= total_steps (T_max clamped to >= 1)
+
+---
+
 ## [0.4.0] - 2026-03-14
 
 ### Added
