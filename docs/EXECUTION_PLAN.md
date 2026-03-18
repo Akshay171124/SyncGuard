@@ -358,9 +358,9 @@ Data Download ──→ Preprocessing ──→ Phase 1 Pretrain ──→ Phase
 - [x] `src/training/pretrain.py` — Phase 1 contrastive pretraining loop *(completed Mar 15)*
 - [x] `src/training/finetune.py` — Phase 2 fine-tuning loop *(completed Mar 15)*
 - [x] `src/training/__init__.py` — Module exports *(completed Mar 14)*
-- [ ] `src/evaluation/metrics.py` — AUC-ROC, EER, pAUC computation
-- [ ] `src/evaluation/evaluate.py` — Evaluation runner
-- [ ] `src/evaluation/visualize.py` — Sync-score plots, ROC curves, ablation charts
+- [x] `src/evaluation/metrics.py` — AUC-ROC, EER, pAUC computation ✓ Mar 18
+- [x] `src/evaluation/evaluate.py` — Evaluation runner ✓ Mar 18
+- [x] `src/evaluation/visualize.py` — Sync-score plots, ROC curves, ablation charts ✓ Mar 18
 - [ ] `src/evaluation/__init__.py` — Module exports
 
 ### Scripts

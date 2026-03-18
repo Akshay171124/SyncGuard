@@ -214,4 +214,38 @@ N/A — documentation phase, no metrics
 
 ---
 
+## Mar 18, 2026 — Evaluation Framework (Task A5)
+
+**Owner:** Akshay
+**Phase:** Implementation
+
+### What I Did
+- Implemented evaluation metrics (`src/evaluation/metrics.py`): AUC-ROC (via sklearn), EER (from ROC curve intersection of FPR and FNR), pAUC at FPR<0.1 and FPR<0.05 (normalized trapezoidal), per-category FakeAVCeleb breakdown (real vs each fake category), bootstrapped 95% confidence intervals.
+- Implemented evaluation runner (`src/evaluation/evaluate.py`): loads checkpoint, runs inference on test DataLoaders, collects sigmoid scores + sync-score means, saves JSON results + .npz raw predictions per test set.
+- Implemented visualization tools (`src/evaluation/visualize.py`): 7 plot types — ROC curves (single, multi-dataset, per-category), sync-score temporal profiles, sync-score distribution histograms, training loss curves (pretrain/finetune variants), ablation bar charts. All plots save as PNG (300 DPI) + PDF with consistent color palette.
+- Updated `src/evaluation/__init__.py` with full exports.
+
+### Results
+- **Metrics test (synthetic, 500 samples):** AUC=0.9675, EER=0.094, pAUC@0.1=0.7808, pAUC@0.05=0.6952 — all reasonable for well-separated synthetic distributions ✓
+- **Per-category AUC:** FV-RA=0.9731, RV-FA=0.9623, FV-FA=0.9671 — all three fake categories computed ✓
+- **All 7 visualization types** generated successfully (PNG + PDF) ✓
+- **EvaluationResult.to_dict()** produces clean JSON-serializable output ✓
+
+### Observations
+- Using sklearn's `roc_curve` + `roc_auc_score` is more robust than our custom implementation in finetune.py (handles edge cases better). The finetune.py versions are kept for training-time use to avoid sklearn dependency during training.
+- pAUC normalization (divide by max_fpr) makes values comparable across different FPR thresholds.
+- Sync-score statistics (real_mean, real_std, fake_mean, fake_std) saved alongside metrics — useful for quick sanity checks.
+
+### Decision
+- **All 12/12 core code components are now complete.** The entire codebase is ready for HPC deployment.
+- Next steps are operational: data transfer to HPC, preprocessing, GPU smoke test, then training runs.
+
+### Artifacts
+- `src/evaluation/metrics.py` — EvaluationResult dataclass + all metric functions
+- `src/evaluation/evaluate.py` — Inference runner + JSON/NPZ output
+- `src/evaluation/visualize.py` — 7 publication-quality plot types
+- `src/evaluation/__init__.py` — Module exports
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->
