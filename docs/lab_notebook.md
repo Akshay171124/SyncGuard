@@ -248,4 +248,44 @@ N/A — documentation phase, no metrics
 
 ---
 
+## Mar 18, 2026 — HPC Setup & GPU Smoke Test (Task B1)
+
+**Owner:** Akshay
+**Phase:** Setup / HPC
+
+### What I Did
+- Set up Northeastern Explorer HPC environment:
+  - Cloned SyncGuard repo to `/scratch/prajapati.aksh/SyncGuard`
+  - Created `syncguard` conda env (Python 3.10, PyTorch 2.5.1+cu121)
+  - Installed all dependencies from `requirements.txt`
+  - Pre-downloaded Wav2Vec 2.0 model to scratch cache (`HF_HOME=/scratch/prajapati.aksh/.cache/huggingface`)
+- Transferred partial FakeAVCeleb dataset (FV-FA category only, 4,659 clips, 1.4 GB) via Google Drive
+- Created and ran GPU smoke test (`scripts/gpu_smoke_test.py`) — **PASSED** on V100-SXM2-32GB
+
+### Results
+- **GPU:** Tesla V100-SXM2-32GB (34.1 GB)
+- **Model:** 107,401,217 total params, 13,029,505 trainable (0.43 GB on GPU)
+- **Forward pass:** 2.815s (B=4, T=50, D=256) — all output shapes correct
+- **Loss:** total=6.14 (InfoNCE=5.32, temp=0.25, cls=0.69) — all finite
+- **Backward + optimizer step:** 0.644s
+- **Peak GPU memory:** 1.58 GB / 34.1 GB — massive headroom
+- **No NaN** in outputs or gradients
+
+### Observations
+- Peak memory 1.58 GB on V100 with B=4 means batch_size=32 on H200 (140 GB) will be very comfortable
+- V100 was allocated (not H200) via `gpu-interactive` partition — training jobs should request H200 specifically
+- Wav2Vec 2.0 `masked_spec_embed` MISSING warning is expected (feature extraction only, not masked prediction)
+- `lm_head` UNEXPECTED warning is also expected (we don't use the language model head)
+
+### Decision
+- HPC is ready for training. Blocked on full FakeAVCeleb dataset (access request submitted, only FV-FA category currently available)
+- Once approved: run preprocessing pipeline on full dataset, then start Phase 1 pretraining
+- Meanwhile: can begin preprocessing the FV-FA clips we have for early testing
+
+### Artifacts
+- `scripts/gpu_smoke_test.py` — GPU smoke test script
+- `/scratch/prajapati.aksh/SyncGuard/smoke_test.log` — smoke test output
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->
