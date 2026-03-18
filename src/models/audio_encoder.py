@@ -81,8 +81,13 @@ class Wav2Vec2AudioEncoder(nn.Module):
         Returns:
             (B, T, embedding_dim) L2-normalized frame-level audio embeddings at ~49Hz
         """
-        # Wav2Vec 2.0 forward with all hidden states
-        with torch.set_grad_enabled(self.wav2vec2.training or any(
+        # Always run frozen backbone in eval mode to avoid NaN from
+        # group normalization on zero-padded regions in train mode
+        backbone_training = self.wav2vec2.training
+        if not any(p.requires_grad for p in self.wav2vec2.parameters()):
+            self.wav2vec2.eval()
+
+        with torch.set_grad_enabled(any(
             p.requires_grad for p in self.wav2vec2.parameters()
         )):
             outputs = self.wav2vec2(
@@ -91,6 +96,10 @@ class Wav2Vec2AudioEncoder(nn.Module):
                 output_hidden_states=True,
                 return_dict=True,
             )
+
+        # Restore original training mode
+        if backbone_training:
+            self.wav2vec2.train(backbone_training)
 
         # Extract the specified hidden layer
         # hidden_states is a tuple of (num_layers + 1) tensors, each (B, T, hidden_size)

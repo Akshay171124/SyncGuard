@@ -355,8 +355,8 @@ Data Download ──→ Preprocessing ──→ Phase 1 Pretrain ──→ Phase
 - [x] `src/models/__init__.py` — Module exports *(completed Mar 14)*
 - [x] `src/training/losses.py` — InfoNCE, temporal consistency, BCE, combined *(completed Mar 14)*
 - [x] `src/training/dataset.py` — Training dataset + hard negative mining *(completed Mar 14)*
-- [ ] `src/training/pretrain.py` — Phase 1 contrastive pretraining loop
-- [ ] `src/training/finetune.py` — Phase 2 fine-tuning loop
+- [x] `src/training/pretrain.py` — Phase 1 contrastive pretraining loop *(completed Mar 15)*
+- [x] `src/training/finetune.py` — Phase 2 fine-tuning loop *(completed Mar 15)*
 - [x] `src/training/__init__.py` — Module exports *(completed Mar 14)*
 - [ ] `src/evaluation/metrics.py` — AUC-ROC, EER, pAUC computation
 - [ ] `src/evaluation/evaluate.py` — Evaluation runner
@@ -364,8 +364,8 @@ Data Download ──→ Preprocessing ──→ Phase 1 Pretrain ──→ Phase
 - [ ] `src/evaluation/__init__.py` — Module exports
 
 ### Scripts
-- [ ] `scripts/train_pretrain.py` — CLI for Phase 1 pretraining
-- [ ] `scripts/train_finetune.py` — CLI for Phase 2 fine-tuning
+- [x] `scripts/train_pretrain.py` — CLI for Phase 1 pretraining *(completed Mar 15)*
+- [x] `scripts/train_finetune.py` — CLI for Phase 2 fine-tuning *(completed Mar 15)*
 - [ ] `scripts/evaluate.py` — CLI for running evaluation
 - [ ] `scripts/demo.py` — Lightweight demo (video → prediction + s(t) plot)
 

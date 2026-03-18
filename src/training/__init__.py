@@ -1,6 +1,6 @@
 """SyncGuard training module.
 
-Loss functions, dataset, and training utilities.
+Loss functions, dataset, training loops, and utilities.
 """
 
 from src.training.losses import (
@@ -18,6 +18,8 @@ from src.training.dataset import (
     collate_syncguard,
     build_dataloaders,
 )
+from src.training.pretrain import train as pretrain
+from src.training.finetune import train as finetune
 
 __all__ = [
     # Losses
@@ -33,4 +35,7 @@ __all__ = [
     "SyncGuardDataset",
     "collate_syncguard",
     "build_dataloaders",
+    # Training loops
+    "pretrain",
+    "finetune",
 ]
