@@ -9,19 +9,24 @@
 ## Current State
 
 ### Done
-- Preprocessing pipeline: RetinaFace + MediaPipe mouth-ROI extraction, audio extraction, Silero-VAD, temporal alignment (25fps → 49Hz)
-- Dataset loaders: FakeAVCeleb (4-category) and CelebDF-v2
-- Config system (`configs/default.yaml`) with all hyperparameters finalized
-- CLI tooling: `scripts/preprocess_dataset.py`, `scripts/download_avspeech.py`
-- 20 sample AVSpeech clips downloaded for testing
-- Project proposal finalized
+- Preprocessing pipeline (RetinaFace + MediaPipe mouth-ROI, audio extraction, Silero-VAD, temporal alignment)
+- Dataset loaders: FakeAVCeleb, CelebDF-v2, AVSpeech
+- Config system (`configs/default.yaml`)
+- CLI tooling: `preprocess_dataset.py`, `download_avspeech.py`, `train_pretrain.py`, `train_finetune.py`, `gpu_smoke_test.py`
+- Model architectures: visual encoder (AV-HuBERT), audio encoder (Wav2Vec 2.0), classifier (Bi-LSTM), SyncGuard integration
+- Training: losses (InfoNCE, temporal, BCE, combined), dataset + collation, pretrain loop, finetune loop
+- Evaluation: metrics (AUC-ROC, EER, pAUC), evaluate runner, visualization (7 plot types)
+- HPC environment: conda env, all deps, Wav2Vec cached, GPU smoke test passed (V100, 1.58 GB peak)
+- FakeAVCeleb FV-FA: 4,485 clips preprocessed on HPC
+- AVSpeech: 24,760 clips uploaded to HPC, preprocessing in progress (auto-resubmitting SLURM job)
 
 ### Not Started
-- Model architectures (`src/models/` — empty)
-- Training loops (`src/training/` — empty)
-- Evaluation framework (`src/evaluation/` — empty)
-- Dataset downloads (FakeAVCeleb, VoxCeleb2/LRS2, CelebDF-v2, DFDC)
-- All experiments, ablations, visualizations
+- Phase 1 contrastive pretraining (blocked on AVSpeech preprocessing completion)
+- Phase 2 fine-tuning (blocked on full FakeAVCeleb access)
+- Full FakeAVCeleb dataset (RV-RA, FV-RA, RV-FA — access request submitted)
+- CelebDF-v2 and DFDC downloads
+- Ablation experiments
+- Wav2Lip adversarial set
 - Poster, report, video demo
 
 ---
@@ -361,13 +366,15 @@ Data Download ──→ Preprocessing ──→ Phase 1 Pretrain ──→ Phase
 - [x] `src/evaluation/metrics.py` — AUC-ROC, EER, pAUC computation ✓ Mar 18
 - [x] `src/evaluation/evaluate.py` — Evaluation runner ✓ Mar 18
 - [x] `src/evaluation/visualize.py` — Sync-score plots, ROC curves, ablation charts ✓ Mar 18
-- [ ] `src/evaluation/__init__.py` — Module exports
+- [x] `src/evaluation/__init__.py` — Module exports ✓ Mar 18
 
 ### Scripts
 - [x] `scripts/train_pretrain.py` — CLI for Phase 1 pretraining *(completed Mar 15)*
 - [x] `scripts/train_finetune.py` — CLI for Phase 2 fine-tuning *(completed Mar 15)*
-- [ ] `scripts/evaluate.py` — CLI for running evaluation
+- [x] `scripts/evaluate.py` — (functionality in src/evaluation/evaluate.py) ✓ Mar 18
 - [ ] `scripts/demo.py` — Lightweight demo (video → prediction + s(t) plot)
+- [x] `scripts/gpu_smoke_test.py` — GPU smoke test ✓ Mar 18
+- [x] `scripts/slurm_preprocess_avspeech.sh` — Auto-resubmitting SLURM job ✓ Mar 18
 
 ### Outputs (generated, gitignored)
 - [ ] `outputs/checkpoints/pretrain_best.pt` — Phase 1 best checkpoint
