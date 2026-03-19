@@ -165,11 +165,43 @@ class CelebDFLoader:
             return [line.strip().split()[-1] for line in f if line.strip()]
 
 
+class AVSpeechLoader:
+    """Loader for AVSpeech dataset (real speech clips for pretraining).
+
+    Expected directory structure:
+        AVSpeech/
+        ├── clips/
+        │   ├── <video_id>.mp4
+        │   ├── ...
+    """
+
+    def __init__(self, root_dir: str):
+        self.root = Path(root_dir)
+        # Support both AVSpeech/ and AVSpeech/clips/
+        self.clips_dir = self.root / "clips" if (self.root / "clips").is_dir() else self.root
+        if not self.clips_dir.exists():
+            raise FileNotFoundError(f"AVSpeech clips not found: {self.clips_dir}")
+
+    def load_samples(self) -> list[VideoSample]:
+        """Scan the clips directory and return all video samples."""
+        samples = []
+        for video_file in sorted(self.clips_dir.glob("*.mp4")):
+            samples.append(VideoSample(
+                video_path=str(video_file),
+                label=0,  # All real
+                category="real",
+                dataset="avspeech",
+                speaker_id=video_file.stem,  # Use video ID as speaker proxy
+            ))
+        return samples
+
+
 def get_dataset_loader(dataset_name: str, root_dir: str):
     """Factory function to get the appropriate dataset loader."""
     loaders = {
         "fakeavceleb": FakeAVCelebLoader,
         "celebdf": CelebDFLoader,
+        "avspeech": AVSpeechLoader,
     }
     if dataset_name not in loaders:
         raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(loaders.keys())}")
