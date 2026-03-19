@@ -288,4 +288,44 @@ N/A — documentation phase, no metrics
 
 ---
 
+## Mar 18, 2026 — FV-FA Preprocessing & AVSpeech Transfer (Task B2)
+
+**Owner:** Akshay
+**Phase:** Data Preparation
+
+### What I Did
+- Ran full preprocessing pipeline on FakeAVCeleb FV-FA category (4,659 clips) on HPC
+- Fixed dependency issues: mediapipe 0.10.14 + TF 2.16.2 + tf-keras 2.16.0 for HPC compatibility
+- Added resume support to preprocessing pipeline (skip already-processed samples)
+- Fixed speaker_id extraction for nested directory structure (ethnicity/gender/speaker_id)
+- Downloaded 24,760 AVSpeech clips from Google Drive via rclone
+- Transferred AVSpeech data to HPC (9.6 GB, split into 1GB chunks for reliable transfer)
+- Added AVSpeech dataset loader and auto-resubmitting SLURM preprocessing script
+- Launched AVSpeech preprocessing on HPC (auto-resubmitting every 2 hours)
+
+### Results
+- **FakeAVCeleb FV-FA:** 4,485 / 4,659 successfully preprocessed (1 failure)
+- **AVSpeech:** 24,760 raw clips on HPC, ~2,400 preprocessed so far (auto-resubmitting)
+- **Face detection rate:** 100% on FV-FA test samples (wavtolip fakes have clean frontal faces)
+- **Speech ratio:** ~93% average (Silero-VAD correctly identifies speech segments)
+- **Processing speed:** ~1 second per clip on V100
+
+### Observations
+- MediaPipe 0.10.32 dropped the legacy `solutions` API — must pin to 0.10.14 on HPC
+- macOS `._` metadata files in tar archives double the file count — must clean before processing
+- SSH transfers of files >2GB unreliable to HPC — splitting into 1GB chunks with rsync --partial works
+- gpu-interactive partition has 2hr max; gpu partition time limit unclear — using auto-resubmit pattern
+
+### Decision
+- AVSpeech preprocessing will complete autonomously via SLURM auto-resubmit (~8-10 hours total)
+- Once done, can start Phase 1 contrastive pretraining immediately
+- Still blocked on full FakeAVCeleb for Phase 2 fine-tuning
+
+### Artifacts
+- `scripts/slurm_preprocess_avspeech.sh` — Auto-resubmitting SLURM job
+- `data/processed/fakeavceleb/FV-FA/` — 4,485 preprocessed samples on HPC
+- `data/processed/avspeech/real/` — Preprocessing in progress on HPC
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->

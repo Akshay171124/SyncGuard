@@ -2,6 +2,22 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [0.7.0] - 2026-03-18
+
+### Added
+- AVSpeech dataset loader (`src/preprocessing/dataset_loader.py`) for pretraining data (flat folder of real speech clips)
+- Resume support in preprocessing pipeline — skips already-processed samples via metadata.json check
+- GPU smoke test script (`scripts/gpu_smoke_test.py`) — verifies model load, forward/backward pass, no NaN, GPU memory
+- Auto-resubmitting SLURM script (`scripts/slurm_preprocess_avspeech.sh`) for long preprocessing jobs
+- HPC environment fully provisioned on Northeastern Explorer cluster
+
+### Fixed
+- Speaker ID extraction for nested FakeAVCeleb directory structure (ethnicity/gender/speaker_id)
+- Module import path in GPU smoke test (sys.path.insert for project root)
+- MediaPipe/TensorFlow/protobuf dependency compatibility on HPC (mediapipe 0.10.14 + TF 2.16.2)
+
+---
+
 ## [0.6.0] - 2026-03-18
 
 ### Added
