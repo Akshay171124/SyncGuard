@@ -24,7 +24,7 @@ def main():
         "--dataset",
         type=str,
         required=True,
-        choices=["fakeavceleb", "celebdf"],
+        choices=["fakeavceleb", "celebdf", "avspeech"],
         help="Dataset name",
     )
     parser.add_argument(
