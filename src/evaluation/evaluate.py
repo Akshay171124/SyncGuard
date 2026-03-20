@@ -271,7 +271,7 @@ def main():
     )
     parser.add_argument(
         "--test_sets", nargs="+",
-        default=["fakeavceleb", "celebdf", "dfdc"],
+        default=["fakeavceleb"],
         help="Test set names to evaluate",
     )
     parser.add_argument(
@@ -290,15 +290,23 @@ def main():
 
     from src.training.dataset import build_dataloaders
 
+    # Build FakeAVCeleb dataloaders (speaker-disjoint train/val/test split)
+    loaders = build_dataloaders(config, phase="finetune")
+
     test_loaders = {}
     for name in args.test_sets:
-        loaders = build_dataloaders(config, phase="test", dataset_name=name)
-        test_loaders[name] = loaders["test"]
+        if name == "fakeavceleb":
+            test_loaders[name] = loaders["test"]
+        else:
+            logger.warning(
+                f"Dataset '{name}' not yet preprocessed on HPC, skipping. "
+                f"Preprocess with: python scripts/preprocess_dataset.py --dataset {name}"
+            )
 
     evaluate(
         config=config,
         checkpoint_path=args.checkpoint,
-        test_set_names=args.test_sets,
+        test_set_names=list(test_loaders.keys()),
         test_loaders=test_loaders,
     )
 
