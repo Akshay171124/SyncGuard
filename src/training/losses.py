@@ -270,18 +270,21 @@ class CombinedLoss(nn.Module):
         logits: torch.Tensor,
         labels: torch.Tensor,
         mask: torch.Tensor = None,
+        audio_logits: torch.Tensor = None,
     ) -> dict[str, torch.Tensor]:
         """Compute combined loss.
 
         Args:
             v_embeds: (B, T, D) visual embeddings
             a_embeds: (B, T, D) audio embeddings
-            logits: (B, 1) classification logits (pre-sigmoid)
+            logits: (B, 1) fused classification logits (pre-sigmoid)
             labels: (B,) binary labels (0 = real, 1 = fake)
             mask: (B, T) optional frame-level mask
+            audio_logits: (B, 1) audio-only classifier logits (optional)
 
         Returns:
-            Dict with 'loss' (total), 'loss_infonce', 'loss_temp', 'loss_cls', 'temperature'
+            Dict with 'loss' (total), 'loss_infonce', 'loss_temp', 'loss_cls',
+            'loss_audio_cls', 'temperature'
         """
         is_real = (labels == 0)  # (B,)
 
@@ -291,11 +294,20 @@ class CombinedLoss(nn.Module):
 
         loss_total = loss_infonce + self.gamma * loss_temp + self.delta * loss_cls
 
+        # Audio-only classification loss (trains the audio head independently)
+        loss_audio_cls = torch.tensor(0.0, device=logits.device)
+        if audio_logits is not None:
+            loss_audio_cls = self.cls_criterion(
+                audio_logits.squeeze(-1), labels.float()
+            )
+            loss_total = loss_total + self.delta * loss_audio_cls
+
         return {
             "loss": loss_total,
             "loss_infonce": loss_infonce.detach(),
             "loss_temp": loss_temp.detach(),
             "loss_cls": loss_cls.detach(),
+            "loss_audio_cls": loss_audio_cls.detach(),
             "temperature": self.temperature.detach(),
         }
 

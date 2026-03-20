@@ -232,6 +232,7 @@ def validate(
                 output.v_embeds, output.a_embeds,
                 output.logits, labels,
                 mask=mask_aligned,
+                audio_logits=output.audio_logits,
             )
 
             total_loss += loss_dict["loss"].item()
@@ -357,9 +358,18 @@ def train(
 
     # Initialize wandb
     audio_swap_ratio = ft_cfg.get("audio_swap_ratio", 0.0)
+    use_audio_head = config["model"].get("audio_head", False)
+
+    # Determine wandb run name
+    run_name = "phase2-finetune"
+    if use_audio_head:
+        run_name = "phase2-finetune-dualhead"
+    elif audio_swap_ratio > 0:
+        run_name = "phase2-finetune-audioswap"
+
     wandb.init(
         project="SyncGuard",
-        name="phase2-finetune-audioswap" if audio_swap_ratio > 0 else "phase2-finetune",
+        name=run_name,
         config={
             "phase": "finetune",
             "epochs": epochs,
@@ -421,6 +431,7 @@ def train(
                 output.v_embeds, output.a_embeds,
                 output.logits, labels,
                 mask=mask_aligned,
+                audio_logits=output.audio_logits,
             )
             loss = loss_dict["loss"]
 

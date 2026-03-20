@@ -205,6 +205,60 @@ class StatisticalClassifier(nn.Module):
         return self.classifier(features)
 
 
+class AudioClassifier(nn.Module):
+    """Audio-only classification head for detecting fake audio (RV-FA).
+
+    Operates on audio embeddings directly, independent of visual input.
+    Catches audio-only manipulations that sync-score-based classifiers miss.
+
+    Architecture:
+        (B, T, D) audio embeddings → mean+max pool → MLP → (B, 1)
+
+    Args:
+        embedding_dim: Audio embedding dimension (default: 256).
+        dropout: Dropout rate (default: 0.3).
+    """
+
+    def __init__(self, embedding_dim: int = 256, dropout: float = 0.3):
+        super().__init__()
+        pool_dim = embedding_dim * 2  # mean + max pool
+        self.classifier = nn.Sequential(
+            nn.Linear(pool_dim, 128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(128, 1),
+        )
+
+    def forward(
+        self,
+        a_embeds: torch.Tensor,
+        lengths: torch.Tensor = None,
+    ) -> torch.Tensor:
+        """Classify audio embeddings as real/fake.
+
+        Args:
+            a_embeds: (B, T, D) audio embeddings.
+            lengths: (B,) actual sequence lengths (optional).
+
+        Returns:
+            (B, 1) real/fake logits.
+        """
+        if lengths is not None:
+            T = a_embeds.shape[1]
+            mask = torch.arange(T, device=a_embeds.device).unsqueeze(0) < lengths.unsqueeze(1)
+            mask = mask.unsqueeze(-1)  # (B, T, 1)
+            a_masked = a_embeds * mask
+            mean_pool = a_masked.sum(dim=1) / lengths.unsqueeze(1).float().clamp(min=1)
+            a_for_max = a_embeds.masked_fill(~mask, float("-inf"))
+            max_pool, _ = a_for_max.max(dim=1)
+        else:
+            mean_pool = a_embeds.mean(dim=1)
+            max_pool, _ = a_embeds.max(dim=1)
+
+        pooled = torch.cat([mean_pool, max_pool], dim=-1)  # (B, 2*D)
+        return self.classifier(pooled)
+
+
 def build_classifier(config: dict) -> nn.Module:
     """Factory function to build classifier from config.
 

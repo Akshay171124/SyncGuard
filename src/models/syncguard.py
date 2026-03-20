@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from src.models.visual_encoder import build_visual_encoder
 from src.models.audio_encoder import build_audio_encoder
-from src.models.classifier import build_classifier
+from src.models.classifier import build_classifier, AudioClassifier
 
 logger = logging.getLogger(__name__)
 
@@ -17,15 +17,19 @@ class SyncGuardOutput:
     """Container for SyncGuard model outputs.
 
     Attributes:
-        logits: (B, 1) real/fake classification logits (pre-sigmoid)
+        logits: (B, 1) fused real/fake classification logits (pre-sigmoid)
         sync_scores: (B, T) frame-level cosine similarities s(t)
         v_embeds: (B, T, D) visual embeddings (L2-normalized)
         a_embeds: (B, T, D) audio embeddings (L2-normalized)
+        sync_logits: (B, 1) sync-based classifier logits
+        audio_logits: (B, 1) audio-only classifier logits (None if disabled)
     """
     logits: torch.Tensor
     sync_scores: torch.Tensor
     v_embeds: torch.Tensor
     a_embeds: torch.Tensor
+    sync_logits: torch.Tensor = None
+    audio_logits: torch.Tensor = None
 
 
 class SyncGuard(nn.Module):
@@ -52,6 +56,18 @@ class SyncGuard(nn.Module):
         self.classifier = build_classifier(config)
 
         embedding_dim = config["model"]["visual_encoder"]["embedding_dim"]
+
+        # Audio-only classification head (for RV-FA detection)
+        self.use_audio_head = config["model"].get("audio_head", False)
+        if self.use_audio_head:
+            dropout = config["model"]["classifier"].get("dropout", 0.3)
+            self.audio_classifier = AudioClassifier(
+                embedding_dim=embedding_dim, dropout=dropout,
+            )
+            # Learnable fusion weight (sigmoid → [0,1])
+            self.fusion_weight = nn.Parameter(torch.tensor(0.0))
+            logger.info("Audio-only classification head enabled")
+
         logger.info(
             f"SyncGuard initialized: "
             f"visual={config['model']['visual_encoder']['name']}, "
@@ -129,14 +145,26 @@ class SyncGuard(nn.Module):
         # Compute sync-scores
         sync_scores = self.compute_sync_scores(v_embeds, a_embeds)  # (B, T)
 
-        # Classify
-        logits = self.classifier(sync_scores, lengths=lengths)  # (B, 1)
+        # Sync-based classification
+        sync_logits = self.classifier(sync_scores, lengths=lengths)  # (B, 1)
+
+        # Audio-only classification (for RV-FA detection)
+        audio_logits = None
+        if self.use_audio_head:
+            audio_logits = self.audio_classifier(a_embeds, lengths=lengths)  # (B, 1)
+            # Fuse: learnable weighted average of sync and audio logits
+            w = torch.sigmoid(self.fusion_weight)
+            logits = (1 - w) * sync_logits + w * audio_logits
+        else:
+            logits = sync_logits
 
         return SyncGuardOutput(
             logits=logits,
             sync_scores=sync_scores,
             v_embeds=v_embeds,
             a_embeds=a_embeds,
+            sync_logits=sync_logits,
+            audio_logits=audio_logits,
         )
 
     def encode_visual(self, mouth_crops: torch.Tensor) -> torch.Tensor:
