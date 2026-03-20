@@ -264,22 +264,26 @@ class SyncGuardDataset(Dataset):
         label = sample.label
         category = sample.category
 
-        # Audio-swap augmentation: swap audio on real samples to create
-        # synthetic RV-FA examples
+        # Audio-swap augmentation: for FAKE samples, with some probability,
+        # replace with a real sample's video + different real sample's audio.
+        # This creates synthetic RV-FA examples without reducing real sample count.
         if (
             self.audio_swap_ratio > 0
-            and sample.label == 0
+            and sample.label == 1
             and len(self._real_indices) > 1
             and random.random() < self.audio_swap_ratio
         ):
-            # Pick a different real sample's audio
-            donor_idx = idx
-            while donor_idx == idx:
-                donor_idx = random.choice(self._real_indices)
-            donor_sample = self.samples[donor_idx]
-            donor_dir = self._get_feature_path(donor_sample)
-            waveform = self._load_audio(donor_dir)
-            label = 1  # Now fake (audio mismatch)
+            # Pick two different real samples: one for video, one for audio
+            video_idx, audio_idx = random.sample(self._real_indices, 2)
+            video_sample = self.samples[video_idx]
+            audio_sample = self.samples[audio_idx]
+
+            # Load video from one real sample, audio from another
+            video_dir = self._get_feature_path(video_sample)
+            audio_dir = self._get_feature_path(audio_sample)
+            mouth_crops = self._load_mouth_crops(video_dir)
+            waveform = self._load_audio(audio_dir)
+            label = 1  # Still fake (mismatched audio-visual)
             category = "RV-FA-aug"
 
         if self.transform is not None:
