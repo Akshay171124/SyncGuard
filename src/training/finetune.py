@@ -356,9 +356,10 @@ def train(
         logger.info(f"Resumed from epoch {start_epoch}, best_val_auc={best_val_auc:.4f}")
 
     # Initialize wandb
+    audio_swap_ratio = ft_cfg.get("audio_swap_ratio", 0.0)
     wandb.init(
         project="SyncGuard",
-        name="phase2-finetune",
+        name="phase2-finetune-audioswap" if audio_swap_ratio > 0 else "phase2-finetune",
         config={
             "phase": "finetune",
             "epochs": epochs,
@@ -369,12 +370,13 @@ def train(
             "gamma": ft_cfg["gamma"],
             "delta": ft_cfg["delta"],
             "hard_negative_ratio": ft_cfg.get("hard_negative_ratio", 0.2),
+            "audio_swap_ratio": audio_swap_ratio,
             "dataset": "fakeavceleb",
             "train_samples": len(train_loader.dataset),
             "val_samples": len(val_loader.dataset),
             "pretrain_ckpt": pretrain_ckpt or "none",
         },
-        tags=["finetune", "fakeavceleb"],
+        tags=["finetune", "fakeavceleb", "audio-swap"] if audio_swap_ratio > 0 else ["finetune", "fakeavceleb"],
     )
 
     logger.info(

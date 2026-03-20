@@ -72,12 +72,14 @@ class SyncGuardDataset(Dataset):
         max_frames: int = 150,
         max_audio_samples: int = 96000,  # ~6s at 16kHz
         hard_negative_ratio: float = 0.0,
+        audio_swap_ratio: float = 0.0,
         transform=None,
     ):
         self.features_dir = Path(features_dir)
         self.max_frames = max_frames
         self.max_audio_samples = max_audio_samples
         self.hard_negative_ratio = hard_negative_ratio
+        self.audio_swap_ratio = audio_swap_ratio
         self.transform = transform
 
         # Filter out samples without preprocessed features
@@ -98,14 +100,21 @@ class SyncGuardDataset(Dataset):
 
         # Build speaker index for hard negative mining
         self._speaker_index: dict[str, list[int]] = {}
-        for i, s in enumerate(samples):
+        for i, s in enumerate(self.samples):
             if s.speaker_id:
                 self._speaker_index.setdefault(s.speaker_id, []).append(i)
 
+        # Build real-sample index for audio-swap augmentation
+        self._real_indices: list[int] = [
+            i for i, s in enumerate(self.samples) if s.label == 0
+        ]
+
         logger.info(
-            f"SyncGuardDataset: {len(samples)} samples, "
+            f"SyncGuardDataset: {len(self.samples)} samples, "
             f"{len(self._speaker_index)} speakers, "
-            f"hard_neg_ratio={hard_negative_ratio:.2f}"
+            f"hard_neg_ratio={hard_negative_ratio:.2f}, "
+            f"audio_swap_ratio={audio_swap_ratio:.2f} "
+            f"({len(self._real_indices)} real samples for swapping)"
         )
 
     def __len__(self) -> int:
@@ -237,6 +246,11 @@ class SyncGuardDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         """Load a single sample.
 
+        For real samples (label=0), with probability audio_swap_ratio, swaps
+        the audio with audio from a different real sample. This creates
+        synthetic RV-FA (real video, fake audio) examples to improve detection
+        of audio-only manipulations.
+
         Returns:
             Dict with keys: mouth_crops, waveform, label, is_real,
                            category, speaker_id, num_frames.
@@ -247,15 +261,36 @@ class SyncGuardDataset(Dataset):
         mouth_crops = self._load_mouth_crops(feature_dir)
         waveform = self._load_audio(feature_dir)
 
+        label = sample.label
+        category = sample.category
+
+        # Audio-swap augmentation: swap audio on real samples to create
+        # synthetic RV-FA examples
+        if (
+            self.audio_swap_ratio > 0
+            and sample.label == 0
+            and len(self._real_indices) > 1
+            and random.random() < self.audio_swap_ratio
+        ):
+            # Pick a different real sample's audio
+            donor_idx = idx
+            while donor_idx == idx:
+                donor_idx = random.choice(self._real_indices)
+            donor_sample = self.samples[donor_idx]
+            donor_dir = self._get_feature_path(donor_sample)
+            waveform = self._load_audio(donor_dir)
+            label = 1  # Now fake (audio mismatch)
+            category = "RV-FA-aug"
+
         if self.transform is not None:
             mouth_crops = self.transform(mouth_crops)
 
         return {
             "mouth_crops": mouth_crops,  # (T, 1, H, W)
             "waveform": waveform,  # (L,)
-            "label": sample.label,
-            "is_real": sample.label == 0,
-            "category": sample.category,
+            "label": label,
+            "is_real": label == 0,
+            "category": category,
             "speaker_id": sample.speaker_id,
             "num_frames": mouth_crops.shape[0],
         }
@@ -363,15 +398,18 @@ def build_dataloaders(
     features_dir = data_cfg["features_dir"]
     batch_size = train_cfg["batch_size"]
 
-    # Hard negative ratio (only for finetune phase)
+    # Hard negative ratio and audio-swap augmentation (only for finetune phase)
     hard_neg_ratio = 0.0
+    audio_swap_ratio = 0.0
     if phase == "finetune":
         hard_neg_ratio = train_cfg.get("hard_negative_ratio", 0.0)
+        audio_swap_ratio = train_cfg.get("audio_swap_ratio", 0.0)
 
     train_ds = SyncGuardDataset(
         samples=train_samples,
         features_dir=features_dir,
         hard_negative_ratio=hard_neg_ratio,
+        audio_swap_ratio=audio_swap_ratio,
     )
     val_ds = SyncGuardDataset(
         samples=val_samples,
