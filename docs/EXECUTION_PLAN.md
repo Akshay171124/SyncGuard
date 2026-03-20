@@ -17,13 +17,16 @@
 - Training: losses (InfoNCE, temporal, BCE, combined), dataset + collation, pretrain loop, finetune loop
 - Evaluation: metrics (AUC-ROC, EER, pAUC), evaluate runner, visualization (7 plot types)
 - HPC environment: conda env, all deps, Wav2Vec cached, GPU smoke test passed (V100, 1.58 GB peak)
-- FakeAVCeleb FV-FA: 4,485 clips preprocessed on HPC
-- AVSpeech: 24,760 clips uploaded to HPC, preprocessing in progress (auto-resubmitting SLURM job)
+- Full FakeAVCeleb uploaded to HPC: 21,544 clips (500 RV-RA + 9,709 FV-RA + 500 RV-FA + 10,835 FV-FA)
+- AVSpeech: 24,760 clips uploaded to HPC
+
+### In Progress
+- AVSpeech preprocessing: ~6,500/24,760 (~27%), auto-resubmitting SLURM job
+- FakeAVCeleb preprocessing: starting (4,485 FV-FA cached), auto-resubmitting SLURM job
 
 ### Not Started
 - Phase 1 contrastive pretraining (blocked on AVSpeech preprocessing completion)
-- Phase 2 fine-tuning (blocked on full FakeAVCeleb access)
-- Full FakeAVCeleb dataset (RV-RA, FV-RA, RV-FA — access request submitted)
+- Phase 2 fine-tuning (blocked on FakeAVCeleb preprocessing completion)
 - CelebDF-v2 and DFDC downloads
 - Ablation experiments
 - Wav2Lip adversarial set

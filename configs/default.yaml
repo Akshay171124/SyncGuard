@@ -4,8 +4,9 @@
 data:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
-  features_dir: "data/features"
+  features_dir: "data/processed"
   fakeavceleb_dir: "data/raw/FakeAVCeleb"
+  avspeech_dir: "data/raw/AVSpeech"
   celebdf_dir: "data/raw/CelebDF-v2"
 
 # Preprocessing

@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
-from src.preprocessing.dataset_loader import VideoSample, FakeAVCelebLoader
+from src.preprocessing.dataset_loader import VideoSample, FakeAVCelebLoader, AVSpeechLoader
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +74,27 @@ class SyncGuardDataset(Dataset):
         hard_negative_ratio: float = 0.0,
         transform=None,
     ):
-        self.samples = samples
         self.features_dir = Path(features_dir)
         self.max_frames = max_frames
         self.max_audio_samples = max_audio_samples
         self.hard_negative_ratio = hard_negative_ratio
         self.transform = transform
+
+        # Filter out samples without preprocessed features
+        valid_samples = []
+        for s in samples:
+            video_stem = Path(s.video_path).stem
+            feat_dir = self.features_dir / s.dataset / s.category / video_stem
+            has_crops = (feat_dir / "mouth_crops.npy").exists()
+            has_audio = (feat_dir / "audio.wav").exists() or (feat_dir / "audio.npy").exists()
+            if has_crops and has_audio:
+                valid_samples.append(s)
+        if len(valid_samples) < len(samples):
+            logger.warning(
+                f"Filtered {len(samples) - len(valid_samples)} samples "
+                f"missing preprocessed features"
+            )
+        self.samples = valid_samples
 
         # Build speaker index for hard negative mining
         self._speaker_index: dict[str, list[int]] = {}
@@ -99,13 +114,20 @@ class SyncGuardDataset(Dataset):
     def _get_feature_path(self, sample: VideoSample) -> Path:
         """Derive feature directory path from the video sample.
 
-        Convention: features_dir / dataset / category / speaker_id / video_stem
-        Falls back to: features_dir / dataset / video_stem
+        Tries paths in order:
+        1. features_dir / dataset / category / video_stem  (pipeline output format)
+        2. features_dir / dataset / category / speaker_id / video_stem  (structured)
+        3. features_dir / dataset / video_stem  (flat)
         """
         video_path = Path(sample.video_path)
         video_stem = video_path.stem
 
-        # Try structured path first
+        # Pipeline output format: dataset/category/video_stem
+        pipeline = self.features_dir / sample.dataset / sample.category / video_stem
+        if pipeline.exists():
+            return pipeline
+
+        # Structured: dataset/category/speaker_id/video_stem
         if sample.speaker_id:
             structured = (
                 self.features_dir
@@ -117,13 +139,13 @@ class SyncGuardDataset(Dataset):
             if structured.exists():
                 return structured
 
-        # Fallback to flat path
+        # Flat: dataset/video_stem
         flat = self.features_dir / sample.dataset / video_stem
         if flat.exists():
             return flat
 
-        # Last resort: just use the stem directly
-        return self.features_dir / video_stem
+        # Default to pipeline format (will error at load time if missing)
+        return pipeline
 
     def _load_mouth_crops(self, feature_dir: Path) -> torch.Tensor:
         """Load mouth crops from .npy file.
@@ -135,7 +157,11 @@ class SyncGuardDataset(Dataset):
         if not npy_path.exists():
             raise FileNotFoundError(f"Mouth crops not found: {npy_path}")
 
-        crops = np.load(npy_path)  # (T, H, W) or (T, 1, H, W)
+        crops = np.load(npy_path)  # (T, H, W), (T, 1, H, W), or (T, H, W, 3)
+
+        # Convert RGB (T, H, W, 3) to grayscale (T, H, W)
+        if crops.ndim == 4 and crops.shape[-1] == 3:
+            crops = np.mean(crops, axis=-1)  # (T, H, W)
 
         if crops.ndim == 3:
             crops = crops[:, np.newaxis, :, :]  # (T, 1, H, W)
@@ -306,15 +332,33 @@ def build_dataloaders(
     train_cfg = config["training"][phase]
     hw_cfg = config["hardware"]
 
-    # Load FakeAVCeleb samples
-    loader = FakeAVCelebLoader(data_cfg["fakeavceleb_dir"])
-    all_samples = loader.load_samples()
-    train_samples, val_samples, test_samples = loader.split_by_speaker(all_samples)
+    if phase == "pretrain":
+        # Phase 1: Load AVSpeech (real-only data for contrastive pretraining)
+        avspeech_dir = data_cfg.get("avspeech_dir", "data/raw/AVSpeech")
+        loader = AVSpeechLoader(avspeech_dir)
+        all_samples = loader.load_samples()
 
-    logger.info(
-        f"Speaker-disjoint splits: "
-        f"train={len(train_samples)}, val={len(val_samples)}, test={len(test_samples)}"
-    )
+        # Random 85/15 train/val split (no test set for pretraining)
+        random.shuffle(all_samples)
+        n_val = max(int(len(all_samples) * 0.15), 1)
+        val_samples = all_samples[:n_val]
+        train_samples = all_samples[n_val:]
+        test_samples = val_samples  # Reuse val as test placeholder
+
+        logger.info(
+            f"AVSpeech pretrain splits: "
+            f"train={len(train_samples)}, val={len(val_samples)}"
+        )
+    else:
+        # Phase 2: Load FakeAVCeleb (real + fake for fine-tuning)
+        loader = FakeAVCelebLoader(data_cfg["fakeavceleb_dir"])
+        all_samples = loader.load_samples()
+        train_samples, val_samples, test_samples = loader.split_by_speaker(all_samples)
+
+        logger.info(
+            f"Speaker-disjoint splits: "
+            f"train={len(train_samples)}, val={len(val_samples)}, test={len(test_samples)}"
+        )
 
     features_dir = data_cfg["features_dir"]
     batch_size = train_cfg["batch_size"]

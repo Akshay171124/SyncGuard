@@ -20,6 +20,8 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 
+import wandb
+
 from src.models.syncguard import SyncGuard, build_syncguard
 from src.training.losses import CombinedLoss, build_finetune_loss
 from src.training.dataset import SyncGuardBatch
@@ -353,6 +355,28 @@ def train(
         best_val_auc = ckpt["val_metrics"].get("val_auc", 0.0)
         logger.info(f"Resumed from epoch {start_epoch}, best_val_auc={best_val_auc:.4f}")
 
+    # Initialize wandb
+    wandb.init(
+        project="SyncGuard",
+        name="phase2-finetune",
+        config={
+            "phase": "finetune",
+            "epochs": epochs,
+            "batch_size": ft_cfg["batch_size"],
+            "lr": ft_cfg["lr"],
+            "weight_decay": ft_cfg["weight_decay"],
+            "warmup_epochs": ft_cfg.get("warmup_epochs", 3),
+            "gamma": ft_cfg["gamma"],
+            "delta": ft_cfg["delta"],
+            "hard_negative_ratio": ft_cfg.get("hard_negative_ratio", 0.2),
+            "dataset": "fakeavceleb",
+            "train_samples": len(train_loader.dataset),
+            "val_samples": len(val_loader.dataset),
+            "pretrain_ckpt": pretrain_ckpt or "none",
+        },
+        tags=["finetune", "fakeavceleb"],
+    )
+
     logger.info(
         f"Starting fine-tuning: {epochs} epochs, "
         f"batch_size={ft_cfg['batch_size']}, lr={ft_cfg['lr']}, "
@@ -447,6 +471,25 @@ def train(
             f"τ={val_metrics['temperature']:.4f} lr={current_lr:.2e} hn={hn_ratio:.2f}"
         )
 
+        # Log to wandb
+        wandb.log({
+            "epoch": epoch,
+            "train/loss": epoch_loss / n,
+            "train/loss_infonce": epoch_nce / n,
+            "train/loss_temp": epoch_temp / n,
+            "train/loss_cls": epoch_cls / n,
+            "val/loss": val_metrics["avg_loss"],
+            "val/loss_infonce": val_metrics["avg_loss_infonce"],
+            "val/loss_temp": val_metrics["avg_loss_temp"],
+            "val/loss_cls": val_metrics["avg_loss_cls"],
+            "val/auc": val_metrics["val_auc"],
+            "val/eer": val_metrics["val_eer"],
+            "temperature": val_metrics["temperature"],
+            "lr": current_lr,
+            "hard_negative_ratio": hn_ratio,
+            "epoch_time_s": round(epoch_time, 1),
+        })
+
         # Save periodic checkpoint
         if (epoch + 1) % 5 == 0:
             save_checkpoint(
@@ -481,6 +524,7 @@ def train(
             break
 
     logger.info(f"Fine-tuning complete. Best val_auc: {best_val_auc:.4f}")
+    wandb.finish()
     return history
 
 
