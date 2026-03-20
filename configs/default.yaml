@@ -71,7 +71,7 @@ training:
     hard_negative_anneal_epochs: 10
     # Audio-swap augmentation: probability of swapping audio on real samples
     # to create synthetic RV-FA (real video, fake audio) training examples
-    audio_swap_ratio: 0.5
+    audio_swap_ratio: 0.15
 
 # Evaluation
 evaluation:
