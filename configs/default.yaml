@@ -41,6 +41,8 @@ model:
     hidden_size: 128
     num_layers: 2
     dropout: 0.3
+  # Audio-only classification head for detecting RV-FA (real video, fake audio)
+  audio_head: true
 
 # Training
 training:
