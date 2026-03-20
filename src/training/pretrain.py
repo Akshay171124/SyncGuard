@@ -19,6 +19,8 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 
+import wandb
+
 from src.models.syncguard import SyncGuard, build_syncguard
 from src.training.losses import PretrainLoss, build_pretrain_loss
 from src.training.dataset import SyncGuardDataset, collate_syncguard, SyncGuardBatch
@@ -27,18 +29,22 @@ from src.utils.config import load_config, get_device
 logger = logging.getLogger(__name__)
 
 
-def build_optimizer(model: SyncGuard, config: dict) -> AdamW:
-    """Build optimizer for pretraining (only trainable parameters).
+def build_optimizer(model: SyncGuard, criterion: PretrainLoss, config: dict) -> AdamW:
+    """Build optimizer for pretraining (model + criterion trainable parameters).
 
     Args:
         model: SyncGuard model.
+        criterion: PretrainLoss instance (contains learnable temperature).
         config: Full config dict.
 
     Returns:
         AdamW optimizer.
     """
     pt_cfg = config["training"]["pretrain"]
-    params = [p for p in model.parameters() if p.requires_grad]
+    params = (
+        [p for p in model.parameters() if p.requires_grad]
+        + [p for p in criterion.parameters() if p.requires_grad]
+    )
     return AdamW(
         params,
         lr=pt_cfg["lr"],
@@ -206,11 +212,31 @@ def train(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    # Initialize wandb
+    wandb.init(
+        project="SyncGuard",
+        name="phase1-pretrain-learnable-tau",
+        config={
+            "phase": "pretrain",
+            "epochs": epochs,
+            "batch_size": pt_cfg["batch_size"],
+            "lr": pt_cfg["lr"],
+            "weight_decay": pt_cfg["weight_decay"],
+            "warmup_epochs": pt_cfg.get("warmup_epochs", 2),
+            "moco_queue_size": pt_cfg.get("moco_queue_size", 4096),
+            "temperature": pt_cfg.get("temperature", 0.07),
+            "dataset": "avspeech",
+            "train_samples": len(train_loader.dataset),
+            "val_samples": len(val_loader.dataset),
+        },
+        tags=["pretrain", "contrastive", "avspeech"],
+    )
+
     # Build model, loss, optimizer, scheduler
     model = build_syncguard(config).to(device)
     criterion = build_pretrain_loss(config).to(device)
     criterion.infonce.queue.to(device)
-    optimizer = build_optimizer(model, config)
+    optimizer = build_optimizer(model, criterion, config)
     scheduler = build_scheduler(optimizer, config, len(train_loader))
 
     start_epoch = 0
@@ -306,6 +332,18 @@ def train(
             f"lr={current_lr:.2e}"
         )
 
+        # Log to wandb
+        wandb.log({
+            "epoch": epoch,
+            "train/loss": avg_train_loss,
+            "train/sync_score": avg_train_sync,
+            "val/loss": val_metrics["avg_loss"],
+            "val/sync_score": val_metrics["avg_sync_score"],
+            "temperature": val_metrics["temperature"],
+            "lr": current_lr,
+            "epoch_time_s": round(epoch_time, 1),
+        })
+
         # Save periodic checkpoint
         if (epoch + 1) % 5 == 0:
             save_checkpoint(
@@ -329,6 +367,7 @@ def train(
             json.dump(history, f, indent=2)
 
     logger.info(f"Pretraining complete. Best val_loss: {best_val_loss:.4f}")
+    wandb.finish()
     return history
 
 

@@ -56,6 +56,12 @@
 - Temporal alignment: visual features upsampled from 25 fps → 49 Hz (Wav2Vec native rate).
 - Output per sample: `mouth_crops.npy`, `audio.wav`, `speech_mask.npy`, `metadata.json`.
 
+## Experiment Tracking
+- **Weights & Biases (wandb)** integrated in both training loops. Project: `SyncGuard`.
+- API key configured on HPC via `wandb login` (stored in `~/.netrc`). Never commit the key.
+- Pretrain run: `phase1-pretrain`, Finetune run: `phase2-finetune`.
+- SLURM scripts export `WANDB_API_KEY` from environment — already set on HPC.
+
 ## Testing & Hardware
 - All experimentation runs on the Northeastern HPC cluster (connected directly).
 - Watch for OOM — hidden states and attention maps from AV-HuBERT/Wav2Vec accumulate quickly.

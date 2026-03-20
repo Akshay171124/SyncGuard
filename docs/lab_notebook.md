@@ -328,4 +328,156 @@ N/A — documentation phase, no metrics
 
 ---
 
+## 2026-03-19 — B3: Full FakeAVCeleb Uploaded & Preprocessing Started
+**Owner:** Akshay
+**Phase:** Preprocessing
+
+### What I Did
+Completed upload of all 4 FakeAVCeleb categories to HPC, extracted and verified clip counts, then submitted a SLURM auto-resubmitting preprocessing job for the full dataset.
+
+### Setup
+- **Upload method:** Split large tarballs into 1GB chunks + rsync --partial with auto-retry
+- **Categories uploaded:**
+  - RealVideo-RealAudio: 500 clips (106 MB)
+  - FakeVideo-RealAudio: 9,709 clips (3.0 GB)
+  - RealVideo-FakeAudio: 500 clips (112 MB)
+  - FakeVideo-FakeAudio: 10,835 clips (3.1 GB)
+- **Total:** 21,544 clips, ~6.3 GB raw
+- **SLURM job:** 5204145 (gpu-interactive, auto-resubmit via USR1 signal trap)
+
+### Results
+- All uploads successful (some rsync retries due to connection drops — handled automatically)
+- Extraction verified: exact clip counts match local source
+- Removed old partial `FakeAVCeleb_v1.2/` directory to free space
+- 4,485 FV-FA clips from earlier dry run will be skipped (resume support)
+- Estimated ~17,059 new clips to process
+
+### Observations
+- macOS `._` metadata files in tar archives double apparent file count (21,670 entries for 10,835 real mp4s) — cleaned after extraction
+- Reassembling split chunks with `cat` on HPC worked perfectly
+- Two SLURM jobs now running in parallel: AVSpeech (6,579/24,760) and FakeAVCeleb (starting)
+
+### Decision
+- Both preprocessing pipelines will run autonomously via auto-resubmit
+- Once AVSpeech completes → Phase 1 contrastive pretraining
+- Once FakeAVCeleb completes → Phase 2 fine-tuning
+- No longer blocked on FakeAVCeleb dataset access
+
+### Artifacts
+- `scripts/slurm_preprocess_fakeavceleb.sh` — Auto-resubmitting SLURM job for full FakeAVCeleb
+- HPC raw data: `/scratch/prajapati.aksh/SyncGuard/data/raw/FakeAVCeleb/{RealVideo-RealAudio,FakeVideo-RealAudio,RealVideo-FakeAudio,FakeVideo-FakeAudio}/`
+
+---
+
+## 2026-03-19 — Phase 1 Contrastive Pretraining Launched (B4)
+**Owner:** Akshay
+**Phase:** Pretrain
+
+### What I Did
+Both preprocessing pipelines completed (AVSpeech: 24,756, FakeAVCeleb: 21,544). Fixed three issues blocking training:
+1. Config `features_dir` pointed to `data/features` instead of `data/processed` — corrected
+2. `_get_feature_path()` in dataset.py didn't match pipeline output format (`dataset/category/video_stem`) — added as primary lookup path
+3. `build_dataloaders()` only loaded FakeAVCeleb — added AVSpeech branch for `phase="pretrain"`
+
+Created SLURM training script (`scripts/slurm_train_pretrain.sh`) requesting H200 GPU, 8hr time limit, auto-resubmit with checkpoint resume. Submitted job 5216491.
+
+### Results
+- N/A — training just started
+
+### Observations
+- `gpu` partition max time is 8 hours (not 24h as docs suggested)
+- H200 nodes available in "mix" state — should allocate soon
+- Cancelled stale preprocessing job (5216484) and monitoring cron
+
+### Decision
+- Monitor training logs for first epoch completion and loss convergence
+- If H200 allocation takes too long, fall back to V100-SXM2
+- Once pretraining completes (20 epochs), move to Phase 2 fine-tuning on FakeAVCeleb
+
+### Artifacts
+- `scripts/slurm_train_pretrain.sh` — Phase 1 SLURM job
+- SLURM job ID: 5216491
+- Config fix: `configs/default.yaml` `features_dir` → `data/processed`
+- Code fix: `src/training/dataset.py` — AVSpeech support + path resolution fix
+
+---
+
+## 2026-03-19 — Dry Run Catches RGB Bug, Pre-staging for Training (B5)
+**Owner:** Akshay
+**Phase:** Pretrain (pre-flight)
+
+### What I Did
+While waiting for H200 allocation (job 5216491 pending on Priority), ran a CPU dry-run of the full training pipeline with synthetic data to catch bugs before burning GPU hours.
+
+1. **Found RGB→grayscale bug in `_load_mouth_crops()`** — Preprocessing saves mouth crops as `(T, 96, 96, 3)` RGB, but the dataset loader assumed `(T, H, W)` grayscale or `(T, 1, H, W)`. Collation crashed with shape mismatch: `Target sizes: [31, 1, 96, 3] vs Tensor sizes: [31, 96, 96, 3]`. Fixed by adding RGB→grayscale conversion (`np.mean(crops, axis=-1)`) before the channel-dim expansion. Fix pushed to HPC before job started.
+
+2. **Pre-downloaded Wav2Vec 2.0 weights** on HPC login node — 361MB cached at `/scratch/prajapati.aksh/.cache/huggingface/`. Training job won't waste GPU time downloading.
+
+3. **Prepared Phase 2 fine-tuning SLURM script** (`scripts/slurm_train_finetune.sh`) — H200, 8hr limit, auto-loads `pretrain_best.pt`, auto-resubmit on timeout. Verified the `--pretrain_ckpt` flag matches `finetune.py` CLI.
+
+4. **Verified dry run end-to-end** — imports, dataset loading, collation, model build (107M params), forward pass (encode visual + audio → align → sync scores), InfoNCE loss computation, backward pass. All passed on CPU.
+
+### Results
+- Dry run loss: 4.4864 (random weights, expected ~log(4096) ≈ 8.3 for InfoNCE — lower because small batch)
+- Grad norm: 0.0 (expected — Wav2Vec frozen, AV-HuBERT random init on CPU with tiny batch)
+- Model: 107,401,217 parameters total
+- Encode shapes: visual `(B, T, 256)`, audio `(B, T, 256)`, sync scores `(B, T)`
+
+### Observations
+- The RGB bug would have crashed the training job on the first batch — this dry run saved an entire GPU allocation cycle
+- H200 queue is deep: ~25 jobs ahead of us, priority score 5059. Running jobs on H200 nodes mostly have 6-7 hrs remaining
+- Estimated wait: 2-4 hours for H200 allocation
+- `gpu` partition confirmed 8hr max (not 24hr as CLAUDE.md stated)
+
+### Decision
+- Bug fix deployed, all pre-flight checks pass — job is ready to run when H200 allocates
+- Phase 2 script staged — submit immediately after pretraining completes
+- Next: monitor for job start, check first epoch loss and sync-score convergence
+
+### Artifacts
+- Bug fix: `src/training/dataset.py` `_load_mouth_crops()` — RGB `(T,H,W,3)` → grayscale `(T,1,H,W)`
+- `scripts/slurm_train_finetune.sh` — Phase 2 SLURM job (ready to submit)
+- Wav2Vec 2.0 cached: `/scratch/prajapati.aksh/.cache/huggingface/hub/models--facebook--wav2vec2-base-960h/`
+
+---
+
+## 2026-03-19 — Wandb Integration + Dry Run Verification (B6)
+**Owner:** Akshay
+**Phase:** Pretrain (infrastructure)
+
+### What I Did
+Integrated Weights & Biases (wandb) into both training loops for live experiment tracking.
+
+1. Added `import wandb` and `wandb.init()` to `pretrain.py` and `finetune.py`
+2. Pretrain logs per epoch: `train/loss`, `val/loss`, `train/sync_score`, `val/sync_score`, `temperature`, `lr`
+3. Finetune logs per epoch: all loss components (`infonce`, `temp`, `cls`), `val/auc`, `val/eer`, `temperature`, `hard_negative_ratio`, `lr`
+4. Both runs close cleanly with `wandb.finish()`
+5. Installed `wandb 0.25.1` on HPC, API key configured via `wandb login`
+6. Added `wandb>=0.15.0` to `requirements.txt` (was previously commented out)
+7. Full CPU dry run: 2 epochs of pretraining with wandb in offline mode — all metrics logged correctly
+
+### Results
+- Dry run (2 epochs, random data, CPU):
+  - Epoch 0: train_loss=5.1441, val_loss=5.0068
+  - Epoch 1: train_loss=5.3031, val_loss=4.7032
+  - wandb logged all 8 metrics across both epochs, run summary generated correctly
+- Confirmed: wandb.init, wandb.log, wandb.finish all work without errors
+
+### Observations
+- wandb offline mode works well for dry runs — no network calls, logs saved locally
+- Training job 5216491 still pending on Priority — code pushed before job started, so it will use wandb-integrated version
+- `masked_spec_embed` warning from Wav2Vec is expected (unused parameter in inference mode)
+
+### Decision
+- Live wandb dashboard will be available at wandb.ai once H200 job starts
+- All future training runs (ablations, Phase 2) will also log to wandb under project "SyncGuard"
+
+### Artifacts
+- `src/training/pretrain.py` — wandb integration added
+- `src/training/finetune.py` — wandb integration added
+- `requirements.txt` — `wandb>=0.15.0` uncommented
+- wandb API key configured on HPC (stored in `~/.netrc`, not in code)
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->

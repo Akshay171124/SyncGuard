@@ -2,6 +2,57 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [0.9.0] - 2026-03-20
+
+### Added
+- Phase 1 contrastive pretraining completed — two runs compared (fixed τ vs learnable τ)
+- A100 SLURM script (`scripts/slurm_train_pretrain_a100.sh`) for gpu-interactive partition
+- Experiment comparison report (`outputs/logs/experiment_pretrain_comparison.md`)
+
+### Fixed
+- **Temperature τ not being optimized (critical bug):** `build_optimizer()` in `pretrain.py` only included `model.parameters()`, missing `criterion.parameters()` where the learnable `log_temperature` lives. Fixed by passing criterion to optimizer builder.
+
+### Results
+- **Run 2 (learnable τ) selected as winner** for Phase 2
+  - Best val loss: 8.2561 (vs 8.2990 fixed τ)
+  - Sync score: 0.7063 (vs 0.7005)
+  - No overfitting (train-val gap 0.028 vs 0.071)
+  - τ learned: 0.07 → 0.041
+- Winner checkpoint: `outputs/checkpoints/pretrain_best.pt` (epoch 17)
+
+---
+
+## [0.8.0] - 2026-03-19
+
+### Added
+- Weights & Biases (wandb) integration in both training loops (`pretrain.py`, `finetune.py`)
+  - Pretrain: logs train/val loss, sync-score, temperature, lr per epoch
+  - Finetune: logs all loss components (infonce, temporal, cls), val AUC, val EER, hard negative ratio per epoch
+  - Project: `SyncGuard`, runs tagged by phase
+- Phase 1 contrastive pretraining SLURM script (`scripts/slurm_train_pretrain.sh`) — H200 GPU, 8hr limit, auto-resubmit with checkpoint resume
+- Phase 2 fine-tuning SLURM script (`scripts/slurm_train_finetune.sh`) — ready to submit after pretraining
+- AVSpeech support in `build_dataloaders()` for pretraining phase (85/15 train/val split)
+- `avspeech_dir` config entry in `configs/default.yaml`
+
+### Fixed
+- `features_dir` in config pointed to `data/features` instead of `data/processed` — training could not find preprocessed data
+- `_get_feature_path()` now tries pipeline output format (`dataset/category/video_stem`) first, matching actual preprocessing output
+- `build_dataloaders()` no longer hardcoded to FakeAVCeleb — selects dataset based on phase (pretrain=AVSpeech, finetune=FakeAVCeleb)
+- `_load_mouth_crops()` crashed on RGB data `(T, 96, 96, 3)` — added RGB→grayscale conversion before channel-dim expansion (caught via CPU dry run)
+
+---
+
+## [0.7.1] - 2026-03-19
+
+### Added
+- Full FakeAVCeleb dataset (21,544 clips, all 4 categories) uploaded to HPC
+- Auto-resubmitting SLURM script for FakeAVCeleb preprocessing (`scripts/slurm_preprocess_fakeavceleb.sh`)
+
+### Changed
+- FakeAVCeleb preprocessing now covers all categories (RV-RA, FV-RA, RV-FA, FV-FA), not just FV-FA
+
+---
+
 ## [0.7.0] - 2026-03-18
 
 ### Added
