@@ -22,7 +22,7 @@ from torch.utils.data import DataLoader
 
 from src.models.syncguard import build_syncguard, SyncGuardOutput
 from src.models.audio_classifier import build_standalone_audio_classifier
-from src.training.dataset import build_dataloaders, SyncGuardBatch
+from src.training.dataset import build_dataloaders, build_test_dataloader, SyncGuardBatch
 from src.evaluation.metrics import compute_all_metrics
 from src.utils.config import load_config, get_device
 
@@ -84,12 +84,13 @@ def run_cascade_inference(
     }
 
 
-def evaluate_cascade(predictions: dict, output_dir: Path):
+def evaluate_cascade(predictions: dict, output_dir: Path, dataset_name: str = "fakeavceleb"):
     """Evaluate cascade fusion strategies and print results.
 
     Args:
         predictions: Dict from run_cascade_inference.
         output_dir: Directory to save results.
+        dataset_name: Name used for output file naming.
     """
     labels = predictions["labels"]
     sync_scores = predictions["sync_scores"]
@@ -114,7 +115,7 @@ def evaluate_cascade(predictions: dict, output_dir: Path):
 
         logger.info(
             f"\n{'='*60}\n"
-            f"Strategy: {name}\n"
+            f"[{dataset_name}] Strategy: {name}\n"
             f"  Overall AUC: {result.auc_roc:.4f}\n"
             f"  EER:         {result.eer:.4f}\n"
             f"  pAUC@0.1:    {result.pauc_fpr01:.4f}\n"
@@ -128,7 +129,7 @@ def evaluate_cascade(predictions: dict, output_dir: Path):
 
     # Save results
     output_dir.mkdir(parents=True, exist_ok=True)
-    result_path = output_dir / "eval_cascade.json"
+    result_path = output_dir / f"eval_cascade_{dataset_name}.json"
     with open(result_path, "w") as f:
         json.dump(results, f, indent=2)
     logger.info(f"\nResults saved to {result_path}")
@@ -142,7 +143,7 @@ def evaluate_cascade(predictions: dict, output_dir: Path):
     }
     if categories is not None:
         save_dict["categories"] = categories
-    np.savez(output_dir / "predictions_cascade.npz", **save_dict)
+    np.savez(output_dir / f"predictions_cascade_{dataset_name}.npz", **save_dict)
 
 
 def main():
@@ -153,6 +154,9 @@ def main():
                         help="Path to trained SyncGuard checkpoint")
     parser.add_argument("--audio_checkpoint", type=str, required=True,
                         help="Path to trained audio classifier checkpoint")
+    parser.add_argument("--datasets", type=str, nargs="+",
+                        default=["fakeavceleb"],
+                        help="Datasets to evaluate on (e.g., fakeavceleb celebdf dfdc)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -181,16 +185,34 @@ def main():
     audio_model.eval()
     logger.info(f"Loaded audio model from {args.audio_checkpoint}")
 
-    # Build test dataloader
-    dataloaders = build_dataloaders(config, phase="finetune")
-    test_loader = dataloaders["test"]
-    logger.info(f"Test set: {len(test_loader.dataset)} samples")
+    output_dir = Path("outputs/logs")
 
-    # Run inference
-    predictions = run_cascade_inference(sync_model, audio_model, test_loader, device)
+    for dataset_name in args.datasets:
+        logger.info(f"\n{'#'*60}\n# Evaluating on: {dataset_name}\n{'#'*60}")
 
-    # Evaluate all fusion strategies
-    evaluate_cascade(predictions, Path("outputs/logs"))
+        if dataset_name == "fakeavceleb":
+            # In-domain: use speaker-disjoint test split
+            dataloaders = build_dataloaders(config, phase="finetune")
+            test_loader = dataloaders["test"]
+        else:
+            # Cross-dataset: load entire dataset for zero-shot eval
+            try:
+                test_loader = build_test_dataloader(config, dataset_name)
+            except (ValueError, FileNotFoundError) as e:
+                logger.warning(f"Skipping {dataset_name}: {e}")
+                continue
+
+        logger.info(f"Test set ({dataset_name}): {len(test_loader.dataset)} samples")
+
+        if len(test_loader.dataset) == 0:
+            logger.warning(f"No preprocessed samples found for {dataset_name}, skipping")
+            continue
+
+        # Run inference
+        predictions = run_cascade_inference(sync_model, audio_model, test_loader, device)
+
+        # Evaluate all fusion strategies
+        evaluate_cascade(predictions, output_dir, dataset_name=dataset_name)
 
 
 if __name__ == "__main__":

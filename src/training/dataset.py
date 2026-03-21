@@ -18,7 +18,10 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
-from src.preprocessing.dataset_loader import VideoSample, FakeAVCelebLoader, AVSpeechLoader
+from src.preprocessing.dataset_loader import (
+    VideoSample, FakeAVCelebLoader, AVSpeechLoader, CelebDFLoader, DFDCLoader,
+    get_dataset_loader,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -456,6 +459,52 @@ def build_dataloaders(
     }
 
     return dataloaders
+
+
+def build_test_dataloader(
+    config: dict,
+    dataset_name: str,
+) -> DataLoader:
+    """Build a test-only DataLoader for cross-dataset evaluation.
+
+    Args:
+        config: Full config dict (from default.yaml).
+        dataset_name: One of "celebdf", "dfdc".
+
+    Returns:
+        DataLoader for the entire dataset (no train/val split — eval only).
+    """
+    data_cfg = config["data"]
+    hw_cfg = config["hardware"]
+
+    dir_key = f"{dataset_name}_dir"
+    root_dir = data_cfg.get(dir_key)
+    if not root_dir:
+        raise ValueError(
+            f"No data directory configured for '{dataset_name}'. "
+            f"Add '{dir_key}' to configs/default.yaml"
+        )
+
+    loader = get_dataset_loader(dataset_name, root_dir)
+    all_samples = loader.load_samples()
+    logger.info(f"Cross-dataset eval: {dataset_name} — {len(all_samples)} samples")
+
+    features_dir = data_cfg["features_dir"]
+    batch_size = config["training"]["finetune"]["batch_size"]
+
+    dataset = SyncGuardDataset(
+        samples=all_samples,
+        features_dir=features_dir,
+    )
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=hw_cfg.get("num_workers", 4),
+        pin_memory=hw_cfg.get("pin_memory", True),
+        collate_fn=collate_syncguard,
+    )
 
 
 if __name__ == "__main__":

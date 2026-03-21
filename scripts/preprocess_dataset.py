@@ -24,14 +24,14 @@ def main():
         "--dataset",
         type=str,
         required=True,
-        choices=["fakeavceleb", "celebdf", "avspeech"],
+        choices=["fakeavceleb", "celebdf", "dfdc", "avspeech"],
         help="Dataset name",
     )
     parser.add_argument(
         "--data_dir",
         type=str,
-        required=True,
-        help="Path to raw dataset root directory",
+        default=None,
+        help="Path to raw dataset root directory (defaults to config value)",
     )
     parser.add_argument(
         "--config",
@@ -62,9 +62,18 @@ def main():
     # Load config
     config = load_config(args.config)
 
+    # Resolve data directory from args or config
+    data_dir = args.data_dir
+    if data_dir is None:
+        dir_key = f"{args.dataset}_dir"
+        data_dir = config["data"].get(dir_key)
+        if not data_dir:
+            logger.error(f"No --data_dir provided and no '{dir_key}' in config")
+            sys.exit(1)
+
     # Load dataset
-    logger.info(f"Loading {args.dataset} from {args.data_dir}")
-    loader = get_dataset_loader(args.dataset, args.data_dir)
+    logger.info(f"Loading {args.dataset} from {data_dir}")
+    loader = get_dataset_loader(args.dataset, data_dir)
     samples = loader.load_samples()
     logger.info(f"Found {len(samples)} samples")
 
