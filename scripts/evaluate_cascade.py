@@ -122,8 +122,8 @@ def evaluate_cascade(predictions: dict, output_dir: Path):
         )
 
         # Per-category breakdown
-        if result.per_category_auc:
-            for cat, auc in sorted(result.per_category_auc.items()):
+        if result.per_category:
+            for cat, auc in sorted(result.per_category.items()):
                 logger.info(f"  {cat}: AUC={auc:.4f}")
 
     # Save results
