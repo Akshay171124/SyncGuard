@@ -2,6 +2,52 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [1.1.0] - 2026-03-20
+
+### Added
+- **Standalone audio classifier** (`src/models/audio_classifier.py`) — Wav2Vec2 (frozen, layer 9) → mean+max pool → MLP for detecting audio deepfakes (TTS, voice cloning)
+- Training script for audio classifier (`scripts/train_audio_classifier.py`) with per-category AUC logging
+- **Cascade evaluation** (`scripts/evaluate_cascade.py`) — runs SyncGuard + audio classifier, compares 4 fusion strategies (sync-only, audio-only, max, avg)
+- SLURM scripts: `slurm_train_audio_clf.sh`, `slurm_evaluate_cascade.sh`
+
+### Results
+- Audio classifier standalone: val_auc=0.8909 (30 epochs, 426K trainable params)
+- **Max-fusion cascade (final system):**
+  - Overall AUC: **0.9458** (↑ from 0.9254 sync-only)
+  - RV-FA AUC: **0.9278** (↑ from 0.5070 — fixed random-chance detection)
+  - FV-FA AUC: **0.9902** (↑ from 0.9528)
+  - pAUC@0.1: **0.7378** (↑ from 0.6097)
+  - EER: **0.1445** (↓ from 0.1481)
+
+---
+
+## [1.0.0] - 2026-03-20
+
+### Added
+- **Phase 2 fine-tuning** on FakeAVCeleb — 4 experiment runs
+- Audio-swap augmentation (`src/training/dataset.py`) — replaces 15% of fake samples with synthetic RV-FA (video from one real clip + audio from another)
+- **AudioClassifier** head (`src/models/classifier.py`) for RV-FA detection via audio embeddings
+- Dual-head architecture in `src/models/syncguard.py` — sync head + audio head with learnable fusion weight
+- `audio_logits` support in `CombinedLoss` (`src/training/losses.py`)
+- Evaluation CLI wrapper (`scripts/evaluate.py`) and SLURM script (`scripts/slurm_evaluate.sh`)
+
+### Fixed
+- `np.trapezoid` AttributeError on NumPy <1.25 — added fallback to `np.trapz`
+- `evaluate.py` dataset loading: uses `build_dataloaders(phase="finetune")` instead of unsupported `phase="test"`
+
+### Results
+- **Run 1** (no augmentation): AUC=0.9112, EER=0.1726, RV-FA=0.5641
+- **Run 2** (audio-swap on reals — bug): AUC collapsed to ~0.50, discarded
+- **Run 3** (audio-swap on fakes, 15%): AUC=0.9254, EER=0.1481, RV-FA=0.5070 — **best sync-only model**
+- **Run 4** (dual-head + fusion): AUC=0.5542, early stopped — learnable fusion destroyed sync signal, abandoned
+
+### Lessons Learned
+- Audio-swap augmentation helps overall metrics but cannot fix RV-FA — architectural limitation of sync-score approach
+- Logit-level fusion of trained + untrained heads degrades both — never mix randomly initialized outputs with trained outputs
+- RV-FA in FakeAVCeleb uses same-content voice cloning, not content-mismatched dubbing — phoneme-viseme mismatch signal is absent
+
+---
+
 ## [0.9.0] - 2026-03-20
 
 ### Added

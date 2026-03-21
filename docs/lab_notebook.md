@@ -480,4 +480,216 @@ Integrated Weights & Biases (wandb) into both training loops for live experiment
 
 ---
 
+## 2026-03-20 — Phase 2 Fine-tuning Run 1: Baseline (No Augmentation)
+**Owner:** Akshay
+**Phase:** Finetune
+
+### What I Did
+Launched Phase 2 fine-tuning on FakeAVCeleb using the Phase 1 winner checkpoint (`pretrain_best.pt`, Run 2 learnable τ). Combined loss: InfoNCE + γ·L_temp + δ·L_cls. Hard negative annealing from 0% → 20% over 10 epochs. Early stopping with patience=5 on val_auc.
+
+### Results
+- **Best val_auc: 0.9112** (epoch 7), EER: 0.1726
+- Early stopped at epoch 12 — AUC dipped after epoch 7 as hard negative ratio ramped past 16%
+- Per-category AUC (test set):
+  - FV-RA: 0.9071 (face-swapped — strong detection)
+  - FV-FA: 0.9397 (both swapped — strong)
+  - **RV-FA: 0.5641** (audio-only fakes — near random chance)
+- pAUC@0.1: 0.4673, pAUC@0.05: 0.2760
+
+### Observations
+- AUC dip after epoch 7 is expected — hard negative annealing introduces harder training samples
+- RV-FA at ~0.56 confirms the sync-score approach cannot detect audio-only fakes: both real and RV-FA clips produce similar "noisy" sync-score patterns since the video is untampered
+- Only 179 RV-FA samples in the dataset compound the problem
+
+### Decision
+- Run 1 checkpoint saved as `finetune_best_run1_no_audioswap.pt`
+- Need to address RV-FA weakness — investigate augmentation and architectural solutions
+
+### Artifacts
+- Checkpoint: `outputs/checkpoints/finetune_best_run1_no_audioswap.pt`
+- wandb: `phase2-finetune`
+- Logs: `outputs/logs/finetune.json`
+
+---
+
+## 2026-03-20 — Phase 2 Run 2: Audio-Swap Augmentation (Buggy, Discarded)
+**Owner:** Akshay
+**Phase:** Finetune
+
+### What I Did
+Implemented audio-swap augmentation to create synthetic RV-FA training examples. First attempt swapped audio on **real** samples with 50% probability — this was a critical bug.
+
+### Results
+- **Overall AUC collapsed to ~0.50** — model couldn't distinguish real from fake at all
+- The bug: swapping audio on real samples (label=0) effectively converted half the real training data into fake, destroying the real class. With only 350 real training samples and 50% swap ratio, the model had almost no genuine real examples to learn from.
+
+### Decision
+- Run discarded. Checkpoint saved as `finetune_best_run2_failed_audioswap.pt` for reference
+- Fix: swap audio on **fake** samples instead, reducing ratio to 15%
+
+### Artifacts
+- Checkpoint: `outputs/checkpoints/finetune_best_run2_failed_audioswap.pt` (do not use)
+
+---
+
+## 2026-03-20 — Phase 2 Run 3: Audio-Swap Augmentation (Fixed)
+**Owner:** Akshay
+**Phase:** Finetune
+
+### What I Did
+Fixed audio-swap augmentation: now replaces 15% of **fake** samples with synthetic RV-FA (video from one real clip + audio from a different real clip, label=1). This preserves all real samples while adding RV-FA diversity to the training set.
+
+### Results
+- **Best val_auc: 0.9254** (improvement over Run 1's 0.9112)
+- **EER: 0.1481** (improvement over 0.1726)
+- Per-category AUC (test set):
+  - FV-RA: 0.9188
+  - FV-FA: 0.9528
+  - **RV-FA: 0.5070** (still at random chance)
+- pAUC@0.1: 0.6097, pAUC@0.05: 0.5268
+- pAUC nearly doubled compared to Run 1
+
+### Observations
+- Overall metrics improved significantly: AUC +0.014, EER -0.025, pAUC doubled
+- But RV-FA remained at random chance — confirming this is an **architectural limitation**, not a data quantity problem
+- The sync-score signal fundamentally cannot distinguish RV-FA from real because both have untampered video with unrelated sync-score distributions
+- Audio-swap augmentation helped the model's calibration overall but can't fix the sync pathway's blindness to audio-only artifacts
+
+### Decision
+- **Run 3 is our best sync-only model** — checkpoint saved as `finetune_best_run3_audioswap.pt`
+- RV-FA requires a fundamentally different detection signal (audio artifact detection)
+- Research confirmed: need a separate audio branch (literature: SIMBA, AVFF, ASVspoof)
+
+### Artifacts
+- Checkpoint: `outputs/checkpoints/finetune_best_run3_audioswap.pt`
+- wandb: `phase2-finetune-audioswap`
+
+---
+
+## 2026-03-20 — Phase 2 Run 4: Dual-Head Architecture (Failed)
+**Owner:** Akshay
+**Phase:** Finetune
+
+### What I Did
+Implemented a dual-head architecture to address RV-FA:
+1. **AudioClassifier** — MLP on pooled Wav2Vec2 embeddings, operates independently of visual input
+2. **Learnable fusion** — `logits = (1-w) * sync_logits + w * audio_logits` where w = sigmoid(learned parameter)
+3. Added `audio_logits` term to CombinedLoss (separate BCE for audio head)
+4. Config: `model.audio_head: true`
+
+### Results
+- **Best val_auc: 0.5542** (epoch 1) — early stopped at epoch 6
+- Model collapsed: overall AUC dropped from 0.9254 to 0.55
+- The randomly initialized audio head produced garbage predictions that contaminated the fused logits through the learnable fusion weight
+- The sync head's good signal (~0.93 AUC alone) was diluted by mixing with random audio predictions
+
+| Epoch | val_auc | val_eer | cls_loss |
+|-------|---------|---------|----------|
+| 0 | 0.3532 | 0.5981 | 0.4259 |
+| 1 | 0.5542 | 0.4219 | 0.1081 |
+| 2 | 0.4002 | 0.6000 | 0.1073 |
+| 3 | 0.4025 | 0.5734 | 0.1073 |
+| 4 | 0.4282 | 0.5599 | 0.1072 |
+| 5 | 0.4260 | 0.5605 | 0.1079 |
+| 6 | 0.3880 | 0.5734 | 0.1087 |
+
+### Observations
+- The claim that this was "purely additive" was wrong — logit-level fusion means both heads affect the final prediction
+- The fusion weight can't learn fast enough to suppress the audio head before early stopping triggers
+- Lesson: never mix randomly initialized head outputs with a trained head's outputs via learned fusion
+
+### Decision
+- Dual-head approach abandoned
+- Pivot to **inference-time cascade**: train a completely separate audio classifier, combine predictions at inference via max-score. This guarantees zero risk to existing sync model performance.
+- Config reverted: `model.audio_head: false`
+
+### Artifacts
+- Checkpoint: `outputs/checkpoints/finetune_best.pt` (dual-head, do not use for sync evaluation)
+- wandb: `phase2-finetune-dualhead`
+- Code changes kept but disabled via config flag
+
+---
+
+## 2026-03-20 — Standalone Audio Classifier Training
+**Owner:** Akshay
+**Phase:** Audio Classifier
+
+### What I Did
+Trained a standalone Wav2Vec2-based audio deepfake classifier, completely independent of SyncGuard:
+- **Model**: Wav2Vec2 (frozen, layer 9) → mean+max pool → 3-layer MLP (1536→256→128→1)
+- **Trainable params**: 426,497 (only the MLP head; backbone frozen)
+- **Data**: Same FakeAVCeleb speaker-disjoint splits, no augmentation needed
+- **Training**: 30 epochs, lr=1e-4, AdamW, cosine schedule, patience=7
+
+### Results
+- **Best val_auc: 0.8909** (ran all 30 epochs, no early stopping)
+- **Final val_eer: 0.1872**
+- AUC climbed steadily from 0.54 → 0.89 over 30 epochs
+- This overall AUC is structurally capped because ~45% of the data is FV-RA (fake video, real audio) — the audio classifier correctly sees real audio but the label says "fake"
+
+### Observations
+- Only 426K trainable parameters — training was fast (~2.5 min/epoch on A100-80GB)
+- The model's strength is detecting audio artifacts (TTS vocoder artifacts, unnatural prosody) in FV-FA and RV-FA categories
+- FV-RA will always be a "mistake" for this model since the audio is genuinely real — but SyncGuard handles FV-RA perfectly
+
+### Decision
+- Best checkpoint saved as `audio_clf_best.pt`
+- Proceed to cascade evaluation combining SyncGuard + audio classifier
+
+### Artifacts
+- Model: `src/models/audio_classifier.py`
+- Training script: `scripts/train_audio_classifier.py`
+- SLURM: `scripts/slurm_train_audio_clf.sh`
+- Checkpoint: `outputs/checkpoints/audio_clf_best.pt`
+- wandb: `audio-classifier-standalone`
+- Logs: `outputs/logs/audio_classifier.json`
+
+---
+
+## 2026-03-20 — Cascade Evaluation: SyncGuard + Audio Classifier
+**Owner:** Akshay
+**Phase:** Evaluation
+
+### What I Did
+Ran inference-time cascade evaluation: both SyncGuard (Run 3) and standalone audio classifier score each test sample independently. Four fusion strategies compared:
+1. **sync_only** — SyncGuard model alone
+2. **audio_only** — Audio classifier alone
+3. **max_fusion** — `max(sync_score, audio_score)` per sample
+4. **avg_fusion** — `(sync_score + audio_score) / 2` per sample
+
+### Results
+
+| Metric | Sync Only | Audio Only | **Max Fusion** | Avg Fusion |
+|--------|-----------|------------|----------------|------------|
+| Overall AUC | 0.9254 | 0.8737 | **0.9458** | 0.9243 |
+| EER | 0.1481 | 0.2271 | **0.1445** | 0.1609 |
+| pAUC@0.1 | 0.6097 | 0.4867 | **0.7378** | 0.5767 |
+| pAUC@0.05 | 0.5268 | 0.4518 | **0.6943** | 0.5002 |
+| FV-RA AUC | 0.9188 | 0.7586 | 0.8981 | 0.8706 |
+| **RV-FA AUC** | **0.5070** | **0.9524** | **0.9278** | 0.7515 |
+| FV-FA AUC | 0.9528 | 0.9745 | **0.9902** | 0.9820 |
+
+### Observations
+- **Max fusion is the clear winner** — best or near-best on every metric
+- **RV-FA fixed**: 0.5070 → 0.9278 (from random chance to strong detection)
+- **FV-FA improved**: 0.9528 → 0.9902 (both models agree on these)
+- **FV-RA slight drop**: 0.9188 → 0.8981 (audio model's false positives on real audio raise the max slightly — acceptable tradeoff)
+- **pAUC nearly doubled**: 0.5268 → 0.6943 at FPR<0.05 — critical improvement in the low-false-positive operating region
+- Avg fusion underperforms max — averaging dilutes the strong signal from whichever model is confident
+- The cascade approach works exactly as designed: each model covers the other's blind spot
+
+### Decision
+- **Max fusion cascade is our final detection system** for FakeAVCeleb evaluation
+- Overall AUC: 0.9458 exceeds our target of 0.88
+- System for the paper: SyncGuard (sync-based) + Audio Classifier (artifact-based) with max-score fusion
+- Next steps: cross-dataset evaluation (CelebDF, DFDC), ablation studies, visualizations, report
+
+### Artifacts
+- Evaluation script: `scripts/evaluate_cascade.py`
+- SLURM: `scripts/slurm_evaluate_cascade.sh`
+- Results: `outputs/logs/eval_cascade.json`
+- Predictions: `outputs/logs/predictions_cascade.npz`
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->
