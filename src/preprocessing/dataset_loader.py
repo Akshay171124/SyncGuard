@@ -165,6 +165,88 @@ class CelebDFLoader:
             return [line.strip().split()[-1] for line in f if line.strip()]
 
 
+class DFDCLoader:
+    """Loader for DFDC (DeepFake Detection Challenge) dataset.
+
+    Expected directory structure:
+        DFDC/
+        ├── real/
+        │   ├── *.mp4
+        ├── fake/
+        │   ├── *.mp4
+        └── metadata.json  (optional — maps filenames to labels)
+
+    Alternative structure (Kaggle test partition):
+        DFDC/
+        ├── *.mp4
+        └── labels.csv  (filename, label columns)
+    """
+
+    def __init__(self, root_dir: str):
+        self.root = Path(root_dir)
+        if not self.root.exists():
+            raise FileNotFoundError(f"DFDC root not found: {self.root}")
+
+    def load_samples(self) -> list[VideoSample]:
+        """Scan the dataset directory and return all video samples."""
+        samples = []
+
+        # Try structured format: real/ and fake/ subdirectories
+        real_dir = self.root / "real"
+        fake_dir = self.root / "fake"
+
+        if real_dir.is_dir() or fake_dir.is_dir():
+            for folder, category, label in [
+                (real_dir, "real", 0),
+                (fake_dir, "fake", 1),
+            ]:
+                if not folder.is_dir():
+                    continue
+                for video_file in sorted(folder.rglob("*.mp4")):
+                    samples.append(VideoSample(
+                        video_path=str(video_file),
+                        label=label,
+                        category=category,
+                        dataset="dfdc",
+                    ))
+            return samples
+
+        # Try flat format with labels.csv
+        labels_csv = self.root / "labels.csv"
+        metadata_json = self.root / "metadata.json"
+
+        label_map = {}
+        if labels_csv.exists():
+            with open(labels_csv) as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    fname = row.get("filename") or row.get("file")
+                    lbl = int(row.get("label", 0))
+                    if fname:
+                        label_map[fname] = lbl
+        elif metadata_json.exists():
+            with open(metadata_json) as f:
+                meta = json.load(f)
+            for fname, info in meta.items():
+                if isinstance(info, dict):
+                    label_map[fname] = 1 if info.get("label") == "FAKE" else 0
+                else:
+                    label_map[fname] = int(info)
+
+        for video_file in sorted(self.root.rglob("*.mp4")):
+            fname = video_file.name
+            label = label_map.get(fname, 0)
+            category = "fake" if label == 1 else "real"
+            samples.append(VideoSample(
+                video_path=str(video_file),
+                label=label,
+                category=category,
+                dataset="dfdc",
+            ))
+
+        return samples
+
+
 class AVSpeechLoader:
     """Loader for AVSpeech dataset (real speech clips for pretraining).
 
@@ -201,6 +283,7 @@ def get_dataset_loader(dataset_name: str, root_dir: str):
     loaders = {
         "fakeavceleb": FakeAVCelebLoader,
         "celebdf": CelebDFLoader,
+        "dfdc": DFDCLoader,
         "avspeech": AVSpeechLoader,
     }
     if dataset_name not in loaders:

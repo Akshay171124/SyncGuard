@@ -8,6 +8,7 @@ data:
   fakeavceleb_dir: "data/raw/FakeAVCeleb"
   avspeech_dir: "data/raw/AVSpeech"
   celebdf_dir: "data/raw/CelebDF-v2"
+  dfdc_dir: "data/raw/DFDC"
 
 # Preprocessing
 preprocessing:
