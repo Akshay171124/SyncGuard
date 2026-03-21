@@ -1,12 +1,12 @@
 # SyncGuard — Execution Plan
 
 **Created:** March 11, 2026
-**Final Deadline:** April 13, 2026 (33 days remaining)
+**Final Deadline:** April 13, 2026 (24 days remaining)
 **Team:** Akshay (Visual Encoder, Preprocessing, Integration Lead) | Ritik (Audio Encoder, Contrastive Pretraining) | Atharva (Temporal Classifier, Evaluation)
 
 ---
 
-## Current State
+## Current State (Updated Mar 20, 2026)
 
 ### Done
 - Preprocessing pipeline (RetinaFace + MediaPipe mouth-ROI, audio extraction, Silero-VAD, temporal alignment)
@@ -16,20 +16,28 @@
 - Model architectures: visual encoder (AV-HuBERT), audio encoder (Wav2Vec 2.0), classifier (Bi-LSTM), SyncGuard integration
 - Training: losses (InfoNCE, temporal, BCE, combined), dataset + collation, pretrain loop, finetune loop
 - Evaluation: metrics (AUC-ROC, EER, pAUC), evaluate runner, visualization (7 plot types)
-- HPC environment: conda env, all deps, Wav2Vec cached, GPU smoke test passed (V100, 1.58 GB peak)
-- Full FakeAVCeleb uploaded to HPC: 21,544 clips (500 RV-RA + 9,709 FV-RA + 500 RV-FA + 10,835 FV-FA)
-- AVSpeech: 24,760 clips uploaded to HPC
-
-### In Progress
-- AVSpeech preprocessing: ~6,500/24,760 (~27%), auto-resubmitting SLURM job
-- FakeAVCeleb preprocessing: starting (4,485 FV-FA cached), auto-resubmitting SLURM job
+- HPC environment: conda env, all deps, Wav2Vec cached, GPU smoke test passed
+- Full FakeAVCeleb uploaded & preprocessed on HPC: 21,544 clips (all 4 categories)
+- AVSpeech uploaded & preprocessed on HPC: 24,760 clips
+- **Phase 1 contrastive pretraining** — completed, 2 runs compared (fixed τ vs learnable τ). Winner: Run 2 (learnable τ), best val loss 8.2561, checkpoint: `pretrain_best.pt` (epoch 17)
+- **Phase 2 fine-tuning** — 4 experiment runs completed:
+  - Run 1 (no augmentation): AUC=0.9112, EER=0.1726
+  - Run 2 (audio-swap on reals — bug): AUC collapsed, discarded
+  - Run 3 (audio-swap on fakes, 15%): AUC=0.9254, EER=0.1481 — **best sync-only model**
+  - Run 4 (dual-head + fusion): AUC=0.5542, abandoned — logit fusion destroyed sync signal
+- **Standalone audio classifier** — trained (Wav2Vec2 frozen → MLP, 426K params), val_auc=0.8909
+- **Cascade evaluation** — max-fusion system evaluated:
+  - Overall AUC: **0.9458**, EER: **0.1445**, pAUC@0.1: **0.7378**
+  - RV-FA AUC: **0.9278** (fixed from 0.5070 sync-only)
+  - FV-FA AUC: **0.9902**, FV-RA AUC: **0.8981**
+- wandb integration in both training loops
+- SLURM scripts for all phases (preprocess, pretrain, finetune, audio clf, cascade eval)
 
 ### Not Started
-- Phase 1 contrastive pretraining (blocked on AVSpeech preprocessing completion)
-- Phase 2 fine-tuning (blocked on FakeAVCeleb preprocessing completion)
-- CelebDF-v2 and DFDC downloads
-- Ablation experiments
+- CelebDF-v2 and DFDC cross-dataset evaluation
+- Ablation experiments (visual encoder, Wav2Vec layer, classifier)
 - Wav2Lip adversarial set
+- Visualizations / plots (10 required types)
 - Poster, report, video demo
 
 ---
@@ -360,6 +368,7 @@ Data Download ──→ Preprocessing ──→ Phase 1 Pretrain ──→ Phase
 - [x] `src/models/audio_encoder.py` — Wav2Vec 2.0 wrapper + projection *(completed Mar 14)*
 - [x] `src/models/classifier.py` — Bi-LSTM temporal classifier *(completed Mar 14)*
 - [x] `src/models/syncguard.py` — Full model integration *(completed Mar 14)*
+- [x] `src/models/audio_classifier.py` — Standalone Wav2Vec2 audio classifier for cascade *(completed Mar 20)*
 - [x] `src/models/__init__.py` — Module exports *(completed Mar 14)*
 - [x] `src/training/losses.py` — InfoNCE, temporal consistency, BCE, combined *(completed Mar 14)*
 - [x] `src/training/dataset.py` — Training dataset + hard negative mining *(completed Mar 14)*
@@ -375,16 +384,23 @@ Data Download ──→ Preprocessing ──→ Phase 1 Pretrain ──→ Phase
 - [x] `scripts/train_pretrain.py` — CLI for Phase 1 pretraining *(completed Mar 15)*
 - [x] `scripts/train_finetune.py` — CLI for Phase 2 fine-tuning *(completed Mar 15)*
 - [x] `scripts/evaluate.py` — (functionality in src/evaluation/evaluate.py) ✓ Mar 18
+- [x] `scripts/train_audio_classifier.py` — Standalone audio classifier training ✓ Mar 20
+- [x] `scripts/evaluate_cascade.py` — Cascade evaluation (sync + audio, 4 fusion strategies) ✓ Mar 20
 - [ ] `scripts/demo.py` — Lightweight demo (video → prediction + s(t) plot)
 - [x] `scripts/gpu_smoke_test.py` — GPU smoke test ✓ Mar 18
 - [x] `scripts/slurm_preprocess_avspeech.sh` — Auto-resubmitting SLURM job ✓ Mar 18
+- [x] `scripts/slurm_train_audio_clf.sh` — SLURM script for audio classifier ✓ Mar 20
+- [x] `scripts/slurm_evaluate_cascade.sh` — SLURM script for cascade eval ✓ Mar 20
 
-### Outputs (generated, gitignored)
-- [ ] `outputs/checkpoints/pretrain_best.pt` — Phase 1 best checkpoint
-- [ ] `outputs/checkpoints/finetune_best.pt` — Phase 2 best checkpoint
-- [ ] `outputs/logs/pretrain.json` — Phase 1 training metrics
-- [ ] `outputs/logs/finetune.json` — Phase 2 training metrics
-- [ ] `outputs/logs/eval_results.json` — All evaluation results
+### Models
+- [x] `src/models/audio_classifier.py` — Standalone Wav2Vec2 audio deepfake classifier ✓ Mar 20
+
+### Outputs (generated, on HPC — gitignored)
+- [x] `outputs/checkpoints/pretrain_best.pt` — Phase 1 best checkpoint (epoch 17, learnable τ)
+- [x] `outputs/checkpoints/finetune_best_run3_audioswap.pt` — Phase 2 best checkpoint (Run 3, audio-swap)
+- [x] `outputs/checkpoints/audio_clf_best.pt` — Standalone audio classifier checkpoint
+- [x] `outputs/logs/eval_cascade.json` — Cascade evaluation results (4 fusion strategies)
+- [x] `outputs/logs/predictions_cascade.npz` — Raw cascade predictions
 - [ ] `outputs/visualizations/` — All generated plots
 
 ### Deliverables
