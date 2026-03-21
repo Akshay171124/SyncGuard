@@ -118,7 +118,7 @@ def evaluate_cascade(predictions: dict, output_dir: Path):
             f"  Overall AUC: {result.auc_roc:.4f}\n"
             f"  EER:         {result.eer:.4f}\n"
             f"  pAUC@0.1:    {result.pauc_fpr01:.4f}\n"
-            f"  pAUC@0.05:   {result.pauc_fpr005:.4f}"
+            f"  pAUC@0.05:   {result.pauc_fpr05:.4f}"
         )
 
         # Per-category breakdown
