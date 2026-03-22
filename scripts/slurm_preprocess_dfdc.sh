@@ -26,5 +26,11 @@ EXIT_CODE=$?
 echo "=== Finished with exit code $EXIT_CODE ($(date)) ==="
 
 # Count processed samples
-PROCESSED=$(find data/processed/dfdc/ -name "metadata.json" 2>/dev/null | wc -l)
+PROCESSED=$(find data/processed/dfdc/ -name "mouth_crops.npy" 2>/dev/null | wc -l)
 echo "Processed samples: $PROCESSED"
+
+# Auto-resubmit if not all done
+if [ $EXIT_CODE -eq 0 ] && [ $PROCESSED -lt 1334 ]; then
+    echo "Resubmitting — $PROCESSED/1334 done"
+    sbatch scripts/slurm_preprocess_dfdc.sh
+fi
