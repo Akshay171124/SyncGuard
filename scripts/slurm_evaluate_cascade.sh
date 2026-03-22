@@ -23,6 +23,7 @@ echo "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
 python scripts/evaluate_cascade.py \
     --config configs/default.yaml \
     --sync_checkpoint outputs/checkpoints/finetune_best_run3_audioswap.pt \
-    --audio_checkpoint outputs/checkpoints/audio_clf_best.pt
+    --audio_checkpoint outputs/checkpoints/audio_clf_best.pt \
+    --datasets fakeavceleb dfdc
 
 echo "=== Finished with exit code $? ($(date)) ==="
