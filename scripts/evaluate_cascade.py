@@ -52,6 +52,7 @@ def run_cascade_inference(
 
     all_sync_scores = []
     all_audio_scores = []
+    all_raw_sync = []
     all_labels = []
     all_categories = []
 
@@ -66,12 +67,17 @@ def run_cascade_inference(
         output: SyncGuardOutput = sync_model(mouth_crops, waveforms, lengths=lengths)
         sync_probs = torch.sigmoid(output.logits.squeeze(-1))  # (B,)
 
+        # Raw sync-scores: mean cosine similarity per sample
+        # Lower sync = more likely fake, so we negate for AUC (higher = more fake)
+        raw_sync = output.sync_scores.mean(dim=-1)  # (B,)
+
         # Audio model
         audio_logits = audio_model(waveforms)
         audio_probs = torch.sigmoid(audio_logits.squeeze(-1))  # (B,)
 
         all_sync_scores.append(sync_probs.cpu().numpy())
         all_audio_scores.append(audio_probs.cpu().numpy())
+        all_raw_sync.append(raw_sync.cpu().numpy())
         all_labels.append(labels.numpy())
         if hasattr(batch, "categories"):
             all_categories.extend(batch.categories)
@@ -79,6 +85,7 @@ def run_cascade_inference(
     return {
         "sync_scores": np.concatenate(all_sync_scores),
         "audio_scores": np.concatenate(all_audio_scores),
+        "raw_sync": np.concatenate(all_raw_sync),
         "labels": np.concatenate(all_labels),
         "categories": np.array(all_categories) if all_categories else None,
     }
@@ -95,7 +102,12 @@ def evaluate_cascade(predictions: dict, output_dir: Path, dataset_name: str = "f
     labels = predictions["labels"]
     sync_scores = predictions["sync_scores"]
     audio_scores = predictions["audio_scores"]
+    raw_sync = predictions.get("raw_sync")
     categories = predictions.get("categories")
+
+    # Raw sync-score: lower cosine sim = more likely fake
+    # Negate so higher = more likely fake (matches AUC convention)
+    raw_sync_neg = -raw_sync if raw_sync is not None else None
 
     # Fusion strategies
     max_scores = np.maximum(sync_scores, audio_scores)
@@ -107,6 +119,8 @@ def evaluate_cascade(predictions: dict, output_dir: Path, dataset_name: str = "f
         "max_fusion": max_scores,
         "avg_fusion": avg_scores,
     }
+    if raw_sync_neg is not None:
+        strategies["raw_sync_score"] = raw_sync_neg
 
     results = {}
     for name, scores in strategies.items():
