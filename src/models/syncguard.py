@@ -123,6 +123,7 @@ class SyncGuard(nn.Module):
         waveform: torch.Tensor,
         audio_attention_mask: torch.Tensor = None,
         lengths: torch.Tensor = None,
+        ear_features: torch.Tensor = None,
     ) -> SyncGuardOutput:
         """Full forward pass: mouth crops + waveform → real/fake prediction.
 
@@ -131,6 +132,7 @@ class SyncGuard(nn.Module):
             waveform: (B, num_samples) raw audio at 16kHz
             audio_attention_mask: (B, num_samples) optional mask for padded audio
             lengths: (B,) actual sync-score sequence lengths (for padded batches)
+            ear_features: (B, T) per-frame EAR values (optional, for blink detection)
 
         Returns:
             SyncGuardOutput with logits, sync_scores, v_embeds, a_embeds
@@ -145,8 +147,14 @@ class SyncGuard(nn.Module):
         # Compute sync-scores
         sync_scores = self.compute_sync_scores(v_embeds, a_embeds)  # (B, T)
 
-        # Sync-based classification
-        sync_logits = self.classifier(sync_scores, lengths=lengths)  # (B, 1)
+        # Truncate EAR features to match aligned length
+        T = sync_scores.shape[1]
+        ear_aligned = None
+        if ear_features is not None:
+            ear_aligned = ear_features[:, :T]
+
+        # Sync-based classification (with optional EAR features)
+        sync_logits = self.classifier(sync_scores, lengths=lengths, ear_features=ear_aligned)  # (B, 1)
 
         # Audio-only classification (for RV-FA detection)
         audio_logits = None

@@ -20,7 +20,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from src.preprocessing.dataset_loader import (
     VideoSample, FakeAVCelebLoader, AVSpeechLoader, CelebDFLoader, DFDCLoader,
-    get_dataset_loader,
+    LRS2Loader, get_dataset_loader,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ class SyncGuardBatch:
         lengths: (B,) number of valid frames per sample.
         categories: List[str] of category labels.
         speaker_ids: List[str] of speaker identifiers.
+        ear_features: (B, T) per-frame Eye Aspect Ratio values (0 if unavailable).
     """
 
     mouth_crops: torch.Tensor
@@ -49,6 +50,7 @@ class SyncGuardBatch:
     lengths: torch.Tensor
     categories: list[str]
     speaker_ids: list[str]
+    ear_features: torch.Tensor = None
 
 
 class SyncGuardDataset(Dataset):
@@ -89,7 +91,11 @@ class SyncGuardDataset(Dataset):
         valid_samples = []
         for s in samples:
             video_stem = Path(s.video_path).stem
-            feat_dir = self.features_dir / s.dataset / s.category / video_stem
+            # LRS2 uses speaker_id_video_stem as directory name
+            if s.dataset == "lrs2" and s.speaker_id:
+                feat_dir = self.features_dir / s.dataset / s.category / f"{s.speaker_id}_{video_stem}"
+            else:
+                feat_dir = self.features_dir / s.dataset / s.category / video_stem
             has_crops = (feat_dir / "mouth_crops.npy").exists()
             has_audio = (feat_dir / "audio.wav").exists() or (feat_dir / "audio.npy").exists()
             if has_crops and has_audio:
@@ -127,12 +133,20 @@ class SyncGuardDataset(Dataset):
         """Derive feature directory path from the video sample.
 
         Tries paths in order:
-        1. features_dir / dataset / category / video_stem  (pipeline output format)
-        2. features_dir / dataset / category / speaker_id / video_stem  (structured)
-        3. features_dir / dataset / video_stem  (flat)
+        1. features_dir / dataset / category / speaker_id_video_stem  (LRS2 unique ID)
+        2. features_dir / dataset / category / video_stem  (pipeline output format)
+        3. features_dir / dataset / category / speaker_id / video_stem  (structured)
+        4. features_dir / dataset / video_stem  (flat)
         """
         video_path = Path(sample.video_path)
         video_stem = video_path.stem
+
+        # LRS2 unique ID format: speaker_id_video_stem
+        if sample.dataset == "lrs2" and sample.speaker_id:
+            unique_id = f"{sample.speaker_id}_{video_stem}"
+            lrs2_path = self.features_dir / sample.dataset / sample.category / unique_id
+            if lrs2_path.exists():
+                return lrs2_path
 
         # Pipeline output format: dataset/category/video_stem
         pipeline = self.features_dir / sample.dataset / sample.category / video_stem
@@ -156,7 +170,9 @@ class SyncGuardDataset(Dataset):
         if flat.exists():
             return flat
 
-        # Default to pipeline format (will error at load time if missing)
+        # Default to LRS2 unique ID or pipeline format
+        if sample.dataset == "lrs2" and sample.speaker_id:
+            return self.features_dir / sample.dataset / sample.category / f"{sample.speaker_id}_{video_stem}"
         return pipeline
 
     def _load_mouth_crops(self, feature_dir: Path) -> torch.Tensor:
@@ -227,6 +243,30 @@ class SyncGuardDataset(Dataset):
 
         return torch.from_numpy(waveform)
 
+    def _load_ear_features(self, feature_dir: Path, num_frames: int) -> torch.Tensor:
+        """Load per-frame EAR (Eye Aspect Ratio) features.
+
+        Args:
+            feature_dir: Directory containing preprocessed features.
+            num_frames: Expected number of frames (for truncation/padding).
+
+        Returns:
+            (T,) float32 tensor of EAR values. Zeros if file not found.
+        """
+        ear_path = feature_dir / "ear_features.npy"
+        if not ear_path.exists():
+            return torch.zeros(num_frames, dtype=torch.float32)
+
+        ear = np.load(ear_path).astype(np.float32)
+        # Truncate to match mouth_crops length
+        if len(ear) > num_frames:
+            ear = ear[:num_frames]
+        elif len(ear) < num_frames:
+            # Pad with zeros
+            ear = np.pad(ear, (0, num_frames - len(ear)), constant_values=0.0)
+
+        return torch.from_numpy(ear)
+
     def _get_hard_negative_idx(self, idx: int) -> int | None:
         """Find a hard negative: same speaker, different clip.
 
@@ -292,6 +332,9 @@ class SyncGuardDataset(Dataset):
         if self.transform is not None:
             mouth_crops = self.transform(mouth_crops)
 
+        # Load EAR features if available
+        ear = self._load_ear_features(feature_dir, mouth_crops.shape[0])
+
         return {
             "mouth_crops": mouth_crops,  # (T, 1, H, W)
             "waveform": waveform,  # (L,)
@@ -300,6 +343,7 @@ class SyncGuardDataset(Dataset):
             "category": category,
             "speaker_id": sample.speaker_id,
             "num_frames": mouth_crops.shape[0],
+            "ear_features": ear,  # (T,)
         }
 
 
@@ -325,6 +369,7 @@ def collate_syncguard(batch: list[dict]) -> SyncGuardBatch:
     # Pre-allocate padded tensors
     mouth_crops = torch.zeros(B, max_frames, 1, H, W)
     waveforms = torch.zeros(B, max_audio_len)
+    ear_features = torch.zeros(B, max_frames)
     mask = torch.zeros(B, max_frames, dtype=torch.bool)
     lengths = torch.zeros(B, dtype=torch.long)
     labels = torch.zeros(B, dtype=torch.long)
@@ -338,6 +383,8 @@ def collate_syncguard(batch: list[dict]) -> SyncGuardBatch:
 
         mouth_crops[i, :T] = item["mouth_crops"]
         waveforms[i, :L] = item["waveform"]
+        if item.get("ear_features") is not None:
+            ear_features[i, :T] = item["ear_features"][:T]
         mask[i, :T] = True
         lengths[i] = T
         labels[i] = item["label"]
@@ -354,6 +401,7 @@ def collate_syncguard(batch: list[dict]) -> SyncGuardBatch:
         lengths=lengths,
         categories=categories,
         speaker_ids=speaker_ids,
+        ear_features=ear_features,
     )
 
 
@@ -375,10 +423,30 @@ def build_dataloaders(
     hw_cfg = config["hardware"]
 
     if phase == "pretrain":
-        # Phase 1: Load AVSpeech (real-only data for contrastive pretraining)
+        # Phase 1: Load AVSpeech + LRS2 (real-only data for contrastive pretraining)
+        all_samples = []
+
         avspeech_dir = data_cfg.get("avspeech_dir", "data/raw/AVSpeech")
-        loader = AVSpeechLoader(avspeech_dir)
-        all_samples = loader.load_samples()
+        try:
+            av_loader = AVSpeechLoader(avspeech_dir)
+            av_samples = av_loader.load_samples()
+            all_samples.extend(av_samples)
+            logger.info(f"AVSpeech: {len(av_samples)} samples loaded")
+        except FileNotFoundError:
+            logger.warning(f"AVSpeech not found at {avspeech_dir}, skipping")
+
+        lrs2_dir = data_cfg.get("lrs2_dir")
+        if lrs2_dir:
+            try:
+                lrs2_loader = LRS2Loader(lrs2_dir)
+                lrs2_samples = lrs2_loader.load_samples()
+                all_samples.extend(lrs2_samples)
+                logger.info(f"LRS2: {len(lrs2_samples)} samples loaded")
+            except FileNotFoundError:
+                logger.warning(f"LRS2 not found at {lrs2_dir}, skipping")
+
+        if not all_samples:
+            raise RuntimeError("No pretraining data found (AVSpeech or LRS2)")
 
         # Random 85/15 train/val split (no test set for pretraining)
         random.shuffle(all_samples)
@@ -388,14 +456,28 @@ def build_dataloaders(
         test_samples = val_samples  # Reuse val as test placeholder
 
         logger.info(
-            f"AVSpeech pretrain splits: "
+            f"Pretrain splits: "
             f"train={len(train_samples)}, val={len(val_samples)}"
         )
     else:
-        # Phase 2: Load FakeAVCeleb (real + fake for fine-tuning)
+        # Phase 2: Load FakeAVCeleb (real + fake) + optional LRS2 reals
         loader = FakeAVCelebLoader(data_cfg["fakeavceleb_dir"])
         all_samples = loader.load_samples()
         train_samples, val_samples, test_samples = loader.split_by_speaker(all_samples)
+
+        # Add LRS2 real clips to training set for stronger real-class representation
+        lrs2_dir = data_cfg.get("lrs2_dir")
+        if lrs2_dir:
+            try:
+                lrs2_loader = LRS2Loader(lrs2_dir)
+                lrs2_samples = lrs2_loader.load_samples()
+                # Add all LRS2 to training (they're all real, label=0)
+                train_samples.extend(lrs2_samples)
+                logger.info(
+                    f"Added {len(lrs2_samples)} LRS2 real samples to fine-tuning train set"
+                )
+            except FileNotFoundError:
+                logger.warning(f"LRS2 not found at {lrs2_dir}, skipping for finetune")
 
         logger.info(
             f"Speaker-disjoint splits: "

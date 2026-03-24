@@ -10,16 +10,18 @@ logger = logging.getLogger(__name__)
 class BiLSTMClassifier(nn.Module):
     """Bi-directional LSTM classifier over sync-score sequences.
 
-    Takes frame-level sync-scores s(t) = cos(v_t, a_t) and classifies
-    the full clip as real or fake based on temporal dip patterns.
+    Takes frame-level sync-scores s(t) = cos(v_t, a_t) and optional EAR
+    (Eye Aspect Ratio) features, and classifies the full clip as real or fake.
 
     Architecture:
-        (B, T) sync-scores → Bi-LSTM → mean+max pool → MLP → sigmoid → (B, 1)
+        (B, T, input_size) → Bi-LSTM → mean+max pool → MLP → sigmoid → (B, 1)
+        input_size = 1 (sync-scores only) or 2 (sync-scores + EAR)
 
     Args:
         hidden_size: LSTM hidden dimension per direction (default: 128).
         num_layers: Number of stacked LSTM layers (default: 2).
         dropout: Dropout between LSTM layers (default: 0.3).
+        use_ear: Whether to accept EAR features as additional input (default: False).
     """
 
     def __init__(
@@ -27,10 +29,14 @@ class BiLSTMClassifier(nn.Module):
         hidden_size: int = 128,
         num_layers: int = 2,
         dropout: float = 0.3,
+        use_ear: bool = False,
     ):
         super().__init__()
+        self.use_ear = use_ear
+        input_size = 2 if use_ear else 1
+
         self.lstm = nn.LSTM(
-            input_size=1,
+            input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0.0,
@@ -50,19 +56,24 @@ class BiLSTMClassifier(nn.Module):
         self,
         sync_scores: torch.Tensor,
         lengths: torch.Tensor = None,
+        ear_features: torch.Tensor = None,
     ) -> torch.Tensor:
         """Classify sync-score sequence as real/fake.
 
         Args:
             sync_scores: (B, T) frame-level cosine similarities
             lengths: (B,) actual sequence lengths before padding (optional).
-                     If provided, pooling ignores padded positions.
+            ear_features: (B, T) per-frame EAR values (optional, used if use_ear=True).
 
         Returns:
             (B, 1) real/fake logits (pre-sigmoid for BCEWithLogitsLoss)
         """
-        # LSTM expects (B, T, 1)
+        # LSTM expects (B, T, input_size)
         x = sync_scores.unsqueeze(-1)  # (B, T, 1)
+
+        if self.use_ear and ear_features is not None:
+            ear = ear_features.unsqueeze(-1)  # (B, T, 1)
+            x = torch.cat([x, ear], dim=-1)  # (B, T, 2)
 
         # Pack padded sequences if lengths provided
         if lengths is not None:
@@ -274,11 +285,14 @@ def build_classifier(config: dict) -> nn.Module:
     num_layers = cls_cfg.get("num_layers", 2)
     dropout = cls_cfg.get("dropout", 0.3)
 
+    use_ear = cls_cfg.get("use_ear", False)
+
     if name == "bilstm":
         return BiLSTMClassifier(
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout,
+            use_ear=use_ear,
         )
     elif name == "cnn1d":
         return CNN1DClassifier(hidden_size=hidden_size, dropout=dropout)

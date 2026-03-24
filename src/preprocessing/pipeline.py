@@ -1,5 +1,7 @@
 import json
 import logging
+import multiprocessing as mp
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -12,11 +14,29 @@ from src.utils.io import read_video_frames
 
 logger = logging.getLogger(__name__)
 
+# Per-worker pipeline instance (initialized in worker_init)
+_worker_pipeline = None
+
+
+def _worker_init(config: dict):
+    """Initialize a PreprocessingPipeline in each worker process."""
+    global _worker_pipeline
+    _worker_pipeline = PreprocessingPipeline(config)
+
+
+def _worker_process(sample: VideoSample) -> dict:
+    """Process a single sample using the worker's pipeline instance."""
+    try:
+        return _worker_pipeline.process_single_video(sample)
+    except Exception as e:
+        return {"video_path": sample.video_path, "error": str(e)}
+
 
 class PreprocessingPipeline:
     """End-to-end preprocessing: video → mouth crops + audio + VAD mask."""
 
     def __init__(self, config: dict):
+        self.config = config
         pp_cfg = config["preprocessing"]
 
         # Video settings
@@ -64,9 +84,14 @@ class PreprocessingPipeline:
         """
         video_path = Path(sample.video_path)
         video_id = video_path.stem
+        # LRS2 has non-unique filenames across speakers (e.g. many 00001.mp4)
+        if sample.dataset == "lrs2" and sample.speaker_id:
+            unique_id = f"{sample.speaker_id}_{video_id}"
+        else:
+            unique_id = video_id
 
         if output_dir is None:
-            output_dir = self.processed_dir / sample.dataset / sample.category / video_id
+            output_dir = self.processed_dir / sample.dataset / sample.category / unique_id
         output_dir.mkdir(parents=True, exist_ok=True)
 
         result = {
@@ -78,21 +103,27 @@ class PreprocessingPipeline:
             "speaker_id": sample.speaker_id,
         }
 
-        # 1. Extract video frames and mouth crops
+        # 1. Extract video frames, mouth crops, and EAR features
         try:
             frames, original_fps = read_video_frames(str(video_path), self.video_fps)
-            mouth_crops, valid_mask = self.face_detector.process_video_frames(frames)
+            mouth_crops, valid_mask, ear_values = (
+                self.face_detector.process_video_frames_with_ear(frames)
+            )
 
             crops_path = output_dir / "mouth_crops.npy"
             mask_path = output_dir / "valid_mask.npy"
+            ear_path = output_dir / "ear_features.npy"
             np.save(str(crops_path), mouth_crops)
             np.save(str(mask_path), valid_mask)
+            np.save(str(ear_path), ear_values)
 
             result["mouth_crops_path"] = str(crops_path)
             result["valid_mask_path"] = str(mask_path)
+            result["ear_features_path"] = str(ear_path)
             result["num_frames"] = len(frames)
             result["num_valid_frames"] = int(valid_mask.sum())
             result["detection_rate"] = float(valid_mask.mean())
+            result["mean_ear"] = float(ear_values[valid_mask].mean()) if valid_mask.any() else 0.0
 
         except Exception as e:
             logger.warning(f"Video processing failed for {video_path}: {e}")
@@ -138,6 +169,13 @@ class PreprocessingPipeline:
 
         return result
 
+    def _get_unique_id(self, sample: VideoSample) -> str:
+        """Get unique output directory ID for a sample."""
+        video_id = Path(sample.video_path).stem
+        if sample.dataset == "lrs2" and sample.speaker_id:
+            return f"{sample.speaker_id}_{video_id}"
+        return video_id
+
     def process_dataset(
         self, samples: list[VideoSample], max_workers: int = 1
     ) -> list[dict]:
@@ -150,38 +188,59 @@ class PreprocessingPipeline:
         Returns:
             List of result dicts
         """
+        # Filter out already-processed samples
+        to_process = []
         results = []
         skipped = 0
         total = len(samples)
 
-        for i, sample in enumerate(samples):
-            # Skip already-processed samples (resume support)
-            video_id = Path(sample.video_path).stem
-            category = sample.category
-            expected_dir = self.processed_dir / sample.dataset / category / video_id
+        for sample in samples:
+            unique_id = self._get_unique_id(sample)
+            expected_dir = self.processed_dir / sample.dataset / sample.category / unique_id
             if (expected_dir / "metadata.json").exists():
                 with open(expected_dir / "metadata.json") as f:
                     result = json.load(f)
                 results.append(result)
                 skipped += 1
-                continue
-
-            logger.info(f"Processing [{i+1}/{total}]: {sample.video_path}")
-            try:
-                result = self.process_single_video(sample)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Failed to process {sample.video_path}: {e}")
-                results.append({
-                    "video_path": sample.video_path,
-                    "error": str(e),
-                })
-
-            if (i + 1) % 100 == 0:
-                logger.info(f"Progress: {i+1}/{total} videos processed ({skipped} skipped)")
+            else:
+                to_process.append(sample)
 
         if skipped:
             logger.info(f"Skipped {skipped} already-processed samples")
+
+        remaining = len(to_process)
+        logger.info(f"Processing {remaining}/{total} samples with {max_workers} workers")
+
+        if remaining == 0:
+            pass
+        elif max_workers <= 1:
+            # Sequential processing
+            for i, sample in enumerate(to_process):
+                logger.info(f"Processing [{i+1}/{remaining}]: {sample.video_path}")
+                try:
+                    result = self.process_single_video(sample)
+                    results.append(result)
+                except Exception as e:
+                    logger.error(f"Failed to process {sample.video_path}: {e}")
+                    results.append({"video_path": sample.video_path, "error": str(e)})
+
+                if (i + 1) % 100 == 0:
+                    logger.info(f"Progress: {i+1}/{remaining} videos processed")
+        else:
+            # Parallel processing
+            processed = 0
+            with mp.Pool(
+                processes=max_workers,
+                initializer=_worker_init,
+                initargs=(self.config,),
+            ) as pool:
+                for result in pool.imap_unordered(_worker_process, to_process, chunksize=10):
+                    results.append(result)
+                    processed += 1
+                    if processed % 100 == 0:
+                        logger.info(f"Progress: {processed}/{remaining} videos processed")
+
+            logger.info(f"Parallel processing complete: {processed}/{remaining}")
 
         # Save manifest
         manifest_path = self.processed_dir / "manifest.json"
