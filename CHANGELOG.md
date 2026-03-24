@@ -2,6 +2,82 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [2.1.0] - 2026-03-23
+
+### Fixed
+- **MediaPipe Tasks API migration:** Rewrote `face_detector.py` from deprecated `mp.solutions.face_mesh.FaceMesh` to `mp.tasks.vision.FaceLandmarker`. Required because mediapipe 0.10.33 + protobuf 7.x removed the `solutions` API entirely.
+- **EGL segfault on GPU nodes:** MediaPipe Tasks API aggressively initializes EGL/OpenGL even with `Delegate.CPU`. Fix: `export __EGL_VENDOR_LIBRARY_DIRS=/dev/null` blocks vendor library loading.
+- **LRS2 unique ID collision:** Speakers share filenames (00001.mp4, etc.) causing only 225/96K samples to be processed. Fix: `unique_id = f"{speaker_id}_{video_stem}"` for LRS2 dataset in both `pipeline.py` and `dataset.py`.
+- **LRS2 config path:** `lrs2_dir` corrected to `data/raw/LRS2/mvlrs_v1/pretrain`
+
+### Added
+- **Multiprocessing for preprocessing:** `mp.Pool`-based parallel processing with per-worker pipeline instances. 15x speedup (~190 samples/min with 14 workers vs ~13/min single-threaded).
+- `--workers` CLI argument in `preprocess_dataset.py`
+- New SLURM training scripts: `slurm_pretrain.sh` (Phase 1 CMP, H200, auto-resubmit), `slurm_finetune.sh` (Phase 2 EAR, H200, auto-resubmit)
+
+### Completed (HPC)
+- **EAR extraction:** FakeAVCeleb (19,725 samples) + DFDC (1,334 samples) — all complete
+- **LRS2 transfer:** ~50 GB, 144K videos transferred to HPC
+- **LRS2 preprocessing:** In progress (~18,453/96,318 done, auto-resuming after job preemption)
+
+---
+
+## [2.0.0] - 2026-03-22
+
+### Added
+- **Cross-modal prediction pretraining (AVFF-style):** `CrossModalPredictionLoss` — masks 30% of frames, predicts across modalities via MLP. Combined with InfoNCE: L = L_InfoNCE + 0.5 * L_CMP
+- **EAR (Eye Aspect Ratio) blink features:** Per-frame blink detection from MediaPipe eye landmarks (6 per eye). Extracted during preprocessing, fed to BiLSTM classifier as 2nd input channel
+- **LRS2 dataset loader** (`LRS2Loader`) — real speech videos for expanded pretraining and extra real samples in fine-tuning
+- **EAR-only extraction script** (`scripts/extract_ear_features.py`) — adds EAR to existing preprocessed data without full re-run
+- **New SLURM scripts:** `slurm_preprocess_lrs2.sh`, `slurm_extract_ear.sh`, `slurm_train_pretrain_cmp.sh`, `slurm_train_finetune_ear.sh`
+
+### Changed
+- `PretrainLoss` now combines InfoNCE + cross-modal prediction (configurable via `cross_modal_prediction` flag)
+- `BiLSTMClassifier` accepts `use_ear=True` to expand input from 1D (sync-scores) to 2D (sync-scores + EAR)
+- `SyncGuard.forward()` accepts optional `ear_features` parameter
+- `build_dataloaders()` Phase 1 loads AVSpeech + LRS2; Phase 2 adds LRS2 reals to FakeAVCeleb
+- Preprocessing pipeline now saves `ear_features.npy` alongside mouth crops
+- `preprocess_dataset.py` supports `lrs2` dataset
+
+### Config
+- `training.pretrain.cross_modal_prediction: true`
+- `training.pretrain.cmp_weight: 0.5`
+- `training.pretrain.cmp_mask_ratio: 0.3`
+- `model.classifier.use_ear: true`
+- `data.lrs2_dir: "data/raw/LRS2"`
+
+---
+
+## [1.2.0] - 2026-03-22
+
+### Attempted
+- **CelebDF-v2 cross-dataset evaluation** — preprocessed 921 clips, discovered entire dataset has no audio streams. Incompatible with AV sync-based methods. Dropped from evaluation.
+- **DFDC cross-dataset evaluation** — downloaded Part 0 (1,334 clips), preprocessed, ran cascade evaluation with 5 strategies. All at random chance (best AUC: 0.5712 sync_only). Root cause: DFDC face-swaps preserve lip-sync, so sync-scores don't discriminate.
+- **Raw sync-score thresholding** on DFDC — AUC 0.4378, confirming the encoder representations themselves don't generalize, not just the classifier.
+
+### Added
+- DFDC dataset loader (`src/preprocessing/dataset_loader.py`) and preprocessing SLURM script
+- `raw_sync_score` evaluation strategy in `scripts/evaluate_cascade.py` — uses mean sync-score directly without Bi-LSTM
+
+### Fixed
+- protobuf version conflict on HPC: kaggle pulled protobuf 7.x breaking mediapipe. Pinned to `protobuf<5` (4.25.8)
+
+### Results — DFDC Cross-Dataset (Zero-Shot)
+| Strategy | AUC | EER |
+|----------|-----|-----|
+| sync_only | 0.5712 | 0.4535 |
+| audio_only | 0.4857 | 0.5084 |
+| max_fusion | 0.4960 | 0.5120 |
+| avg_fusion | 0.5378 | 0.4649 |
+| raw_sync_score | 0.4378 | 0.5563 |
+
+### Next Steps
+- Implement cross-modal prediction pretraining (AVFF-style) to learn deeper AV correspondence
+- Add blink rate / EAR features for face-swap detection
+- Retrain on expanded data (LRS2 + AVSpeech)
+
+---
+
 ## [1.1.0] - 2026-03-20
 
 ### Added

@@ -692,4 +692,235 @@ Ran inference-time cascade evaluation: both SyncGuard (Run 3) and standalone aud
 
 ---
 
+## 2026-03-21 — Cross-Dataset Evaluation: CelebDF-v2 (Incompatible)
+**Owner:** Akshay
+**Phase:** Evaluation
+
+### What I Did
+Attempted cross-dataset (zero-shot) evaluation on CelebDF-v2. Downloaded the dataset (9.29 GB, 921 clips), transferred to HPC, and ran preprocessing. All 921 clips preprocessed successfully — but discovered that **CelebDF-v2 has no audio streams**. Every single video is video-only (face-swap focused dataset). This makes it fundamentally incompatible with any AV sync-based approach.
+
+### Results
+- 921/921 clips preprocessed (video features extracted)
+- **0/921 clips have audio** — entire dataset is silent
+- Cannot run SyncGuard or audio classifier evaluation
+
+### Observations
+- CelebDF-v2 is a face-swap dataset focused on visual quality. The creators did not include audio because the manipulation is purely visual.
+- This is not fixable — it's a dataset design limitation, not a preprocessing bug.
+- Many AV deepfake detection papers skip CelebDF-v2 for this exact reason but don't always mention it explicitly.
+
+### Decision
+- CelebDF-v2 dropped from cross-dataset evaluation. Will note in the paper as a limitation of AV-based approaches.
+- Pivoted to DFDC as our sole cross-dataset benchmark (has both audio and video).
+
+### Artifacts
+- Preprocessed data: `/scratch/prajapati.aksh/SyncGuard/data/processed/celebdf/` (921 samples, video-only)
+
+---
+
+## 2026-03-21 — Cross-Dataset Evaluation: DFDC (Random Chance)
+**Owner:** Akshay
+**Phase:** Evaluation
+
+### What I Did
+Downloaded DFDC Part 0 from Kaggle (1,334 training clips with labels from metadata.json). Transferred to HPC via rsync (12 GB, required multiple retries due to connection drops). Fixed protobuf version conflict (kaggle pulled protobuf 7.x which broke mediapipe — downgraded to 4.25.8). Preprocessed all 1,334 clips successfully. Ran cascade evaluation with all fusion strategies plus a new `raw_sync_score` strategy (mean sync-score thresholding without Bi-LSTM).
+
+### Results
+
+| Strategy | AUC | EER | pAUC@0.1 | pAUC@0.05 |
+|----------|-----|-----|----------|-----------|
+| sync_only | 0.5712 | 0.4535 | 0.0684 | 0.0331 |
+| audio_only | 0.4857 | 0.5084 | 0.0467 | 0.0161 |
+| max_fusion | 0.4960 | 0.5120 | 0.0489 | 0.0182 |
+| avg_fusion | 0.5378 | 0.4649 | 0.0665 | 0.0369 |
+| raw_sync_score | 0.4378 | 0.5563 | 0.0134 | 0.0008 |
+
+**All strategies at or below random chance (AUC ~0.50).** Target was AUC ≥ 0.72.
+
+### Observations
+- **Root cause:** DFDC face-swaps preserve lip-sync — the face identity is changed but the mouth movements still match the original audio. Our sync-score approach measures lip-audio alignment, which remains intact in these fakes.
+- **Raw sync-score thresholding also failed** (AUC 0.4378), confirming the problem is at the encoder/representation level, not the classifier. The encoders produce similar sync-scores for both real and DFDC-fake clips.
+- **Audio classifier also failed** (AUC 0.4857) — DFDC audio is mostly unmodified, so there are no TTS/vocoder artifacts to detect.
+- This is a fundamental limitation of our current approach: sync-based methods detect **lip-sync mismatches**, but face-swap deepfakes don't create lip-sync mismatches.
+
+### Decision
+- Current model cannot generalize to face-swap deepfakes that preserve lip-sync.
+- Researched state-of-the-art: AVFF (CVPR 2024) achieves 86.2% AUC on DFDC using **cross-modal prediction pretraining** — mask 30% of one modality, predict from the other.
+- Decision: implement cross-modal prediction pretraining (AVFF-style) + blink rate features (EAR-based) to capture deeper AV correspondence beyond simple sync.
+
+### Artifacts
+- DFDC data: `/scratch/prajapati.aksh/SyncGuard/data/processed/dfdc/` (1,334 samples)
+- Results: `outputs/logs/eval_cascade_dfdc.json`
+- SLURM scripts: `scripts/slurm_preprocess_dfdc.sh`, `scripts/slurm_evaluate_cascade.sh`
+
+---
+
+## 2026-03-22 — Research & Planning: Cross-Modal Pretraining + Blink Features
+**Owner:** Akshay
+**Phase:** Research / Planning
+
+### What I Did
+Conducted literature review to find approaches that generalize to face-swap deepfakes. Key findings:
+- **AVFF (CVPR 2024)**: Self-supervised pretraining via cross-modal prediction — mask 30% of audio frames, predict from visual (and vice versa). Forces encoders to learn deep AV correspondence beyond surface-level sync. Achieves 86.2% AUC on DFDC.
+- **AVoiD-DF**: Bi-directional cross-attention between modalities, 91.1% AUC on DFDC.
+- **Blink rate analysis**: Face-swap deepfakes disrupt natural blink patterns. Eye Aspect Ratio (EAR) = (||p2-p6|| + ||p3-p5||) / (2 × ||p1-p4||) from MediaPipe eye landmarks. Can be extracted during preprocessing and added as temporal features to the classifier.
+
+### Plan — Option 2: Cross-Modal Prediction Pretraining
+1. Add masked cross-modal prediction loss to Phase 1 pretraining (alongside existing InfoNCE)
+2. Extract EAR (blink rate) features during preprocessing using MediaPipe eye landmarks
+3. Download + preprocess LRS2 dataset (60 GB, already on Google Drive) for expanded pretraining
+4. Retrain Phase 1 on LRS2 + AVSpeech with new pretraining objective
+5. Retrain Phase 2 on FakeAVCeleb with blink features added to classifier input
+6. Re-evaluate on DFDC
+
+### Decision
+- Proceeding with Option 2 despite tight timeline (deadline Apr 13, ~3 weeks remaining)
+- Estimated 5-7 days for implementation + retraining
+- Risk acknowledged: if cross-modal pretraining doesn't improve DFDC results, we report the negative result and analysis
+
+### Artifacts
+- Research notes referenced: AVFF (arXiv:2310.02000), AVoiD-DF, ASVspoof challenge papers
+
+---
+
+## 2026-03-22 — Implementation: Cross-Modal Prediction + EAR + LRS2 Integration
+**Owner:** Akshay
+**Phase:** Implementation
+
+### What I Did
+Full implementation of Option 2 (cross-modal prediction pretraining + blink rate features):
+
+**Cross-Modal Prediction (CMP):**
+- `CrossModalPredictionLoss` in `src/training/losses.py` — masks 30% of frames in one modality, uses MLP predictors (V→A: 256→512→256, A→V: same) to reconstruct masked embeddings via L1 loss. Both directions computed per batch, averaged.
+- `PretrainLoss` updated to combine InfoNCE + λ_cmp × L_CMP (default λ=0.5)
+- Pretraining loop logs CMP losses to wandb alongside InfoNCE
+
+**EAR (Eye Aspect Ratio) Blink Features:**
+- `compute_ear()` and `extract_mouth_roi_and_ear()` in `src/preprocessing/face_detector.py` — uses 6 MediaPipe eye landmarks per eye (LEFT_EYE_IDX, RIGHT_EYE_IDX)
+- Pipeline updated to save `ear_features.npy` per sample during preprocessing
+- `extract_ear_features.py` script for adding EAR to already-preprocessed datasets without redoing full pipeline
+- `BiLSTMClassifier` expanded: `use_ear=True` changes input_size from 1→2 (sync_scores + EAR)
+- Full pipeline: dataset loader → collation → SyncGuard forward → classifier all pass EAR through
+
+**LRS2 Integration:**
+- `LRS2Loader` in `src/preprocessing/dataset_loader.py` — supports nested and flat directory structures
+- `build_dataloaders` updated: Phase 1 loads AVSpeech + LRS2, Phase 2 adds LRS2 reals to FakeAVCeleb training set
+- Config: `lrs2_dir` added to `default.yaml`
+
+**SLURM Scripts:**
+- `slurm_preprocess_lrs2.sh` — full pipeline with EAR, auto-resubmit
+- `slurm_extract_ear.sh` — EAR-only pass for FakeAVCeleb + DFDC
+- `slurm_train_pretrain_cmp.sh` — Phase 1 with CMP, H200, auto-resume
+- `slurm_train_finetune_ear.sh` — Phase 2 with EAR + LRS2 reals, H200
+
+### Results
+- CPU dry run passed: CMP loss=0.057, InfoNCE+CMP total=5.76, BiLSTM+EAR forward+backward clean
+- All shape checks verified: (B, T, 2) input to LSTM, correct EAR truncation after sequence alignment
+
+### Decision
+Ready to deploy to HPC. Execution order:
+1. Transfer LRS2 tar to HPC, extract, preprocess (`slurm_preprocess_lrs2.sh`)
+2. Extract EAR for FakeAVCeleb + DFDC (`slurm_extract_ear.sh`) — runs in parallel with step 1
+3. Push updated code to HPC
+4. Phase 1 CMP pretraining (`slurm_train_pretrain_cmp.sh`)
+5. Phase 2 fine-tuning with EAR (`slurm_train_finetune_ear.sh`)
+6. Re-evaluate on DFDC
+
+### Artifacts
+- `src/training/losses.py` — `CrossModalPredictionLoss`, updated `PretrainLoss`
+- `src/preprocessing/face_detector.py` — EAR computation + combined extraction
+- `src/preprocessing/pipeline.py` — saves ear_features.npy
+- `src/preprocessing/dataset_loader.py` — `LRS2Loader`
+- `src/training/dataset.py` — EAR in batch + LRS2 in both phases
+- `src/models/classifier.py` — BiLSTM use_ear=True
+- `src/models/syncguard.py` — ear_features in forward pass
+- `src/training/finetune.py` — passes EAR in train + val
+- `scripts/extract_ear_features.py` — standalone EAR extraction
+- `scripts/slurm_preprocess_lrs2.sh`, `slurm_extract_ear.sh`, `slurm_train_pretrain_cmp.sh`, `slurm_train_finetune_ear.sh`
+- `configs/default.yaml` — CMP, EAR, LRS2 config entries
+
+## 2026-03-23 — HPC Deployment: EAR Extraction, LRS2 Preprocessing, Infrastructure Fixes
+**Owner:** Akshay
+**Phase:** Data Preparation / HPC Deployment
+
+### What I Did
+
+**EAR Feature Extraction (completed):**
+- Extracted EAR (Eye Aspect Ratio) blink features for FakeAVCeleb (19,725 samples) and DFDC (1,334 samples) on HPC
+- Used isolated `ear_extract` conda env (mediapipe==0.10.14, protobuf==4.25.8) to avoid protobuf conflicts
+- SLURM job 5382837 completed successfully
+
+**LRS2 Dataset Transfer & Setup:**
+- Transferred LRS2 dataset to HPC (~50 GB, 144K videos across 96,318 pretrain + 48,165 main splits)
+- Updated config: `lrs2_dir: "data/raw/LRS2/mvlrs_v1/pretrain"`
+
+**MediaPipe Tasks API Migration (critical fix):**
+- Rewrote `src/preprocessing/face_detector.py` from deprecated `mp.solutions.face_mesh.FaceMesh` to new `mp.tasks.vision.FaceLandmarker` API
+- Reason: mediapipe 0.10.33 with protobuf 7.x removed the `solutions` API entirely
+- New implementation auto-downloads `face_landmarker.task` model, forces CPU delegate
+- Landmark access changed: `landmarks[idx].x` instead of `landmarks.landmark[idx].x`
+
+**EGL Segfault Fix (critical fix):**
+- MediaPipe Tasks API initializes EGL/OpenGL on GPU nodes, causing segfault (exit code 139)
+- `BaseOptions.Delegate.CPU`, `LIBGL_ALWAYS_SOFTWARE=1`, `MESA_GL_VERSION_OVERRIDE=4.5` all insufficient
+- **Fix:** `export __EGL_VENDOR_LIBRARY_DIRS=/dev/null` blocks EGL vendor library loading entirely
+- Added to `slurm_preprocess_lrs2.sh`
+
+**LRS2 Unique ID Collision Fix:**
+- LRS2 has many speakers with identical filenames (00001.mp4, 00002.mp4, etc.)
+- Pipeline stored first speaker's 00001.mp4 in `data/processed/lrs2/real/00001/`, skipped all subsequent
+- Only 225 unique samples out of 96K were actually processed before fix
+- **Fix:** For LRS2, use `unique_id = f"{sample.speaker_id}_{video_id}"` — scoped to LRS2 only
+- Applied in `pipeline.py` (process_single_video + process_dataset) and `dataset.py` (_get_feature_path + sample validation)
+
+**Multiprocessing for Preprocessing:**
+- Single-worker processing was ~13 samples/min = ~5 days for 96K
+- Added `mp.Pool`-based parallel processing with per-worker pipeline instances
+- Added `--workers` CLI arg to `preprocess_dataset.py`
+- With 14 workers on 16 CPUs: ~190 samples/min
+
+**Conda Environment Restoration:**
+- Restored `syncguard` env with tensorflow 2.21.0, retina-face, protobuf 7.34.1 after dependency conflicts
+
+**New SLURM Training Scripts:**
+- `scripts/slurm_pretrain.sh` — Phase 1 CMP pretraining, H200, 8hr, auto-resubmit with checkpoint resume
+- `scripts/slurm_finetune.sh` — Phase 2 fine-tuning with EAR, H200, 8hr, auto-resubmit
+
+**Code Discovery:**
+- Confirmed CMP pretraining code (`CrossModalPredictionLoss`, updated `PretrainLoss`) already fully implemented
+- Confirmed EAR classifier integration already implemented (BiLSTM `use_ear=True`, dataset loading, collation)
+- No new training code needed — can proceed directly to training once LRS2 preprocesses
+
+### Results
+- **EAR extraction:** FakeAVCeleb 19,725 + DFDC 1,334 — all complete
+- **LRS2 40K smoke test:** Passed on A100 (courses partition) — confirmed pipeline works end-to-end
+- **LRS2 full 96K:** ~18,453 processed before job preemption, resubmitted as job 5392595 (auto-resumes from processed samples)
+- **Processing rate with multiprocessing:** ~190 samples/min (14 workers) vs ~13 samples/min (1 worker) — 15x speedup
+
+### Observations
+- MediaPipe's EGL initialization is aggressive — even `Delegate.CPU` doesn't prevent it on GPU nodes
+- LRS2 unique ID collision was subtle: pipeline "succeeded" on 225 samples with no errors, but silently skipped 96K duplicates
+- `gpu` partition max 8 hours; `gpu-short` nodes were DOWN/DRAINED; `courses` partition useful for CPU-only smoke tests
+- Job preemption (SIGTERM) is common on shared partitions — `--requeue` + resume-from-checkpoint pattern is essential
+
+### Decision
+- Wait for LRS2 full 96K preprocessing to complete (~8-10 hours remaining)
+- Once done: submit Phase 1 CMP pretraining (`slurm_pretrain.sh`)
+- Then: Phase 2 fine-tuning with EAR (`slurm_finetune.sh`)
+- Then: re-evaluate on DFDC
+
+### Artifacts
+- `src/preprocessing/face_detector.py` — rewritten for mediapipe Tasks API
+- `src/preprocessing/pipeline.py` — LRS2 unique ID fix + multiprocessing
+- `src/training/dataset.py` — LRS2 path resolution fix
+- `scripts/preprocess_dataset.py` — `--workers` CLI arg
+- `scripts/slurm_pretrain.sh` — Phase 1 H200 training script
+- `scripts/slurm_finetune.sh` — Phase 2 H200 training script
+- `scripts/slurm_preprocess_lrs2.sh` — updated with EGL fix + multiprocessing
+- `configs/default.yaml` — LRS2 dir path corrected
+- EAR features on HPC: `data/processed/fakeavceleb/*/ear_features.npy`, `data/processed/dfdc/*/ear_features.npy`
+- SLURM jobs: EAR extraction 5382837 (done), LRS2 preprocess 5392595 (in progress)
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->
