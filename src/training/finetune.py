@@ -219,9 +219,10 @@ def validate(
             mask = batch.mask.to(device)
             lengths = batch.lengths.to(device)
             labels = batch.labels.to(device)
+            ear = batch.ear_features.to(device) if batch.ear_features is not None else None
 
             # Full forward pass
-            output = model(mouth_crops, waveforms, lengths=lengths)
+            output = model(mouth_crops, waveforms, lengths=lengths, ear_features=ear)
 
             # Align mask to model output length
             T = output.v_embeds.shape[1]
@@ -418,9 +419,10 @@ def train(
             mask = batch.mask.to(device)
             lengths = batch.lengths.to(device)
             labels = batch.labels.to(device)
+            ear = batch.ear_features.to(device) if batch.ear_features is not None else None
 
             # Full forward pass
-            output = model(mouth_crops, waveforms, lengths=lengths)
+            output = model(mouth_crops, waveforms, lengths=lengths, ear_features=ear)
 
             # Align mask
             T = output.v_embeds.shape[1]
