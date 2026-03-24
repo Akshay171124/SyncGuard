@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=gpu-interactive
+#SBATCH --partition=gpu
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:h200:1
 #SBATCH --cpus-per-task=8
@@ -21,7 +21,7 @@ resubmit() {
 trap resubmit USR1
 
 module load miniconda3/24.11.1 FFmpeg/7.1.1
-source activate syncguard
+eval "$(conda shell.bash hook)" && conda activate syncguard
 export HF_HOME=/scratch/$USER/.cache/huggingface
 export WANDB_API_KEY=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
 

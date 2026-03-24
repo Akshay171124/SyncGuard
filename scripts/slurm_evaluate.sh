@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --partition=gpu
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:h200:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64GB
 #SBATCH --time=01:00:00
@@ -10,7 +10,7 @@
 #SBATCH --error=outputs/logs/eval_%j.err
 
 module load miniconda3/24.11.1 FFmpeg/7.1.1
-source activate syncguard
+eval "$(conda shell.bash hook)" && conda activate syncguard
 export HF_HOME=/scratch/$USER/.cache/huggingface
 
 cd /scratch/$USER/SyncGuard
