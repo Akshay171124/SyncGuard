@@ -11,17 +11,21 @@
 #SBATCH --signal=B:USR1@120
 #SBATCH --requeue
 
-# Auto-resubmit on timeout
+# Auto-resubmit on ANY termination signal (timeout, preemption, cancel)
+RESUBMITTED=0
 resubmit() {
-    echo "Time limit approaching — resubmitting..."
-    LATEST=$(ls -t outputs/checkpoints/finetune_epoch_*.pt 2>/dev/null | head -1)
-    if [ -n "$LATEST" ]; then
-        sbatch --export=RESUME_CKPT="$LATEST",PRETRAIN_CKPT="$PRETRAIN_CKPT" scripts/slurm_finetune.sh
-    else
-        sbatch --export=PRETRAIN_CKPT="$PRETRAIN_CKPT" scripts/slurm_finetune.sh
+    if [ $RESUBMITTED -eq 0 ]; then
+        RESUBMITTED=1
+        echo "Signal received — resubmitting... ($(date))"
+        LATEST=$(ls -t outputs/checkpoints/finetune_epoch_*.pt 2>/dev/null | head -1)
+        if [ -n "$LATEST" ]; then
+            sbatch --export=RESUME_CKPT="$LATEST",PRETRAIN_CKPT="$PRETRAIN_CKPT" scripts/slurm_finetune.sh
+        else
+            sbatch --export=PRETRAIN_CKPT="$PRETRAIN_CKPT" scripts/slurm_finetune.sh
+        fi
     fi
 }
-trap resubmit USR1
+trap resubmit USR1 TERM INT HUP XCPU
 
 module load miniconda3/24.11.1 FFmpeg/7.1.1
 eval "$(conda shell.bash hook)" && conda activate syncguard
@@ -48,7 +52,15 @@ fi
 python scripts/train_finetune.py \
     --config configs/default.yaml \
     --pretrain_ckpt "$PRETRAIN_CKPT" \
-    $RESUME_ARG
+    $RESUME_ARG &
 
+CHILD_PID=$!
+wait $CHILD_PID
 EXIT_CODE=$?
 echo "=== Finished with exit code $EXIT_CODE ($(date)) ==="
+
+# Safety net: resubmit on non-zero exit if trap didn't fire
+if [ $EXIT_CODE -ne 0 ] && [ $RESUBMITTED -eq 0 ]; then
+    echo "Non-zero exit ($EXIT_CODE) — resubmitting as safety net..."
+    resubmit
+fi
