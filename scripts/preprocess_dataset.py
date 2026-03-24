@@ -24,7 +24,7 @@ def main():
         "--dataset",
         type=str,
         required=True,
-        choices=["fakeavceleb", "celebdf", "dfdc", "avspeech"],
+        choices=["fakeavceleb", "celebdf", "dfdc", "avspeech", "lrs2"],
         help="Dataset name",
     )
     parser.add_argument(
@@ -44,6 +44,12 @@ def main():
         type=int,
         default=None,
         help="Max number of samples to process (for testing)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers for preprocessing",
     )
     parser.add_argument(
         "--log_level",
@@ -89,7 +95,7 @@ def main():
 
     # Run preprocessing
     pipeline = PreprocessingPipeline(config)
-    results = pipeline.process_dataset(samples)
+    results = pipeline.process_dataset(samples, max_workers=args.workers)
     pipeline.close()
 
     # Summary

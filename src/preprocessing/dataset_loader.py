@@ -278,6 +278,64 @@ class AVSpeechLoader:
         return samples
 
 
+class LRS2Loader:
+    """Loader for LRS2 (Lip Reading Sentences 2) dataset.
+
+    LRS2 contains real speech videos — used for pretraining and as extra
+    real samples in fine-tuning.
+
+    Supports multiple directory structures:
+        LRS2/
+        ├── main/
+        │   ├── <video_id>/
+        │   │   ├── *.mp4
+        ├── pretrain/
+        │   ├── ...
+
+    Or flat structure:
+        LRS2/
+        ├── *.mp4
+    """
+
+    def __init__(self, root_dir: str):
+        self.root = Path(root_dir)
+        if not self.root.exists():
+            raise FileNotFoundError(f"LRS2 root not found: {self.root}")
+
+    def load_samples(self, max_samples: int = 0) -> list[VideoSample]:
+        """Scan the dataset directory and return all video samples.
+
+        Args:
+            max_samples: Maximum number of samples to return (0 = unlimited).
+
+        Returns:
+            List of VideoSample objects (all real, label=0).
+        """
+        samples = []
+
+        # Collect all mp4 files recursively
+        video_files = sorted(self.root.rglob("*.mp4"))
+
+        for video_file in video_files:
+            # Extract speaker ID from parent directory
+            rel = video_file.relative_to(self.root)
+            parts = rel.parts
+            speaker_id = parts[0] if len(parts) >= 2 else video_file.stem
+
+            samples.append(VideoSample(
+                video_path=str(video_file),
+                label=0,  # All real
+                category="real",
+                dataset="lrs2",
+                speaker_id=speaker_id,
+            ))
+
+            if max_samples > 0 and len(samples) >= max_samples:
+                break
+
+        return samples
+
+
 def get_dataset_loader(dataset_name: str, root_dir: str):
     """Factory function to get the appropriate dataset loader."""
     loaders = {
@@ -285,6 +343,7 @@ def get_dataset_loader(dataset_name: str, root_dir: str):
         "celebdf": CelebDFLoader,
         "dfdc": DFDCLoader,
         "avspeech": AVSpeechLoader,
+        "lrs2": LRS2Loader,
     }
     if dataset_name not in loaders:
         raise ValueError(f"Unknown dataset: {dataset_name}. Available: {list(loaders.keys())}")
