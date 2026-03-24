@@ -9,6 +9,7 @@ data:
   avspeech_dir: "data/raw/AVSpeech"
   celebdf_dir: "data/raw/CelebDF-v2"
   dfdc_dir: "data/raw/DFDC/dfdc_train_part_0"
+  lrs2_dir: "data/raw/LRS2/mvlrs_v1/pretrain"
 
 # Preprocessing
 preprocessing:
@@ -42,6 +43,7 @@ model:
     hidden_size: 128
     num_layers: 2
     dropout: 0.3
+    use_ear: true    # Include EAR (blink rate) as additional input to classifier
   # Audio-only classification head for detecting RV-FA (real video, fake audio)
   audio_head: false
 
@@ -58,6 +60,10 @@ training:
     moco_queue_size: 4096
     temperature: 0.07
     temperature_range: [0.01, 0.5]
+    # Cross-modal prediction (AVFF-style)
+    cross_modal_prediction: true
+    cmp_weight: 0.5      # Weight for CMP loss relative to InfoNCE
+    cmp_mask_ratio: 0.3   # Fraction of frames to mask per direction
   # Phase 2: Fine-tuning on FakeAVCeleb
   finetune:
     epochs: 30
