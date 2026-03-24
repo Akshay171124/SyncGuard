@@ -6,7 +6,7 @@
 
 ---
 
-## Current State (Updated Mar 20, 2026)
+## Current State (Updated Mar 23, 2026)
 
 ### Done
 - Preprocessing pipeline (RetinaFace + MediaPipe mouth-ROI, audio extraction, Silero-VAD, temporal alignment)
@@ -33,8 +33,30 @@
 - wandb integration in both training loops
 - SLURM scripts for all phases (preprocess, pretrain, finetune, audio clf, cascade eval)
 
+### Completed (Cross-Dataset)
+- **CelebDF-v2:** Preprocessed 921 clips — no audio streams in entire dataset, incompatible with AV methods. Dropped.
+- **DFDC Part 0:** Preprocessed 1,334 clips — all cascade strategies at random chance (best AUC 0.5712). Face-swaps preserve lip-sync, so sync-scores don't discriminate.
+- **Raw sync-score thresholding:** AUC 0.4378 on DFDC — encoder representations don't generalize, not just classifier.
+
+### In Progress (HPC Deployment — Mar 23)
+- **LRS2 preprocessing:** ~18,453/96,318 processed, job auto-resuming after preemption (SLURM job 5392595). Multiprocessing with 14 workers, ~190 samples/min.
+
+### Completed (HPC Deployment — Mar 23)
+- **EAR extraction:** FakeAVCeleb (19,725) + DFDC (1,334) — all ear_features.npy saved ✓
+- **LRS2 transfer:** ~50 GB, 144K videos transferred to HPC ✓
+- **Code deployed to HPC:** mediapipe Tasks API migration, EGL fix, LRS2 unique ID fix, multiprocessing ✓
+- **CMP + EAR code verified:** All training code (CrossModalPredictionLoss, BiLSTM use_ear, dataset loading) already implemented and ready ✓
+- **SLURM training scripts ready:** `slurm_pretrain.sh` (Phase 1 CMP, H200), `slurm_finetune.sh` (Phase 2 EAR, H200) ✓
+
+### HPC Deployment Queue
+1. ~~Transfer LRS2 tar (60 GB) to HPC, extract, preprocess with EAR~~ — ✅ Transfer done, preprocessing in progress
+2. ~~Extract EAR for existing FakeAVCeleb (21,544) + DFDC (1,334)~~ — ✅ Complete
+3. ~~Push updated code to HPC~~ — ✅ Complete (mediapipe migration, EGL fix, unique ID fix, multiprocessing)
+4. **Phase 1 CMP pretraining** on AVSpeech + LRS2 (20 epochs, H200) — blocked on LRS2 preprocessing
+5. Phase 2 fine-tuning with EAR + LRS2 reals on FakeAVCeleb (30 epochs, H200)
+6. Re-evaluate on DFDC with new model
+
 ### Not Started
-- CelebDF-v2 and DFDC cross-dataset evaluation
 - Ablation experiments (visual encoder, Wav2Vec layer, classifier)
 - Wav2Lip adversarial set
 - Visualizations / plots (10 required types)
