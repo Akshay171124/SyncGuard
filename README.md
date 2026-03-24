@@ -2,46 +2,121 @@
 
 **Contrastive Audio-Visual Deepfake Detection via Temporal Phoneme-Face Coherence**
 
-CS 5330 Computer Vision & Pattern Recognition — Northeastern University
+CS 5330 Computer Vision & Pattern Recognition — Northeastern University, Khoury College of Computer Sciences
 
 ## Team
-- Akshay Prajapati (prajapati.aksh@northeastern.edu)
-- Ritik Mahyavanshi (mahyavanshi.r@northeastern.edu)
-- Atharva Dhumal (dhumal.a@northeastern.edu)
+
+- **Akshay Prajapati** — Visual Encoder, Preprocessing, Integration Lead (prajapati.aksh@northeastern.edu)
+- **Ritik Mahyavanshi** — Audio Encoder, Contrastive Pretraining (mahyavanshi.r@northeastern.edu)
+- **Atharva Dhumal** — Temporal Classifier, Evaluation (dhumal.a@northeastern.edu)
 
 ## Overview
 
-SyncGuard detects deepfake videos by measuring the temporal coherence between speech audio and facial motion. It computes a frame-level sync-score `s(t) = cos(v_t, a_t)` using contrastively trained visual and audio encoders, then classifies clips based on temporal dip patterns in this score sequence.
+SyncGuard detects deepfake videos by measuring the temporal coherence between speech audio and facial motion. The system uses a two-stream contrastive learning architecture:
+
+1. **Visual Encoder** (AV-HuBERT) extracts frame-level lip embeddings from mouth-ROI crops
+2. **Audio Encoder** (Wav2Vec 2.0, frozen) extracts frame-level speech embeddings
+3. **Sync-Score** `s(t) = cos(v_t, a_t)` measures per-frame audio-visual alignment
+4. **Bi-LSTM Classifier** detects temporal dip patterns in sync-scores to classify real vs fake
+5. **EAR Features** (Eye Aspect Ratio) detect unnatural blink patterns in face-swaps
+
+### Training Pipeline
+
+- **Phase 1 — Contrastive Pretraining:** InfoNCE + Cross-Modal Prediction (AVFF-style) on AVSpeech + LRS2 (~117K real clips)
+- **Phase 2 — Fine-tuning:** Combined loss (InfoNCE + temporal consistency + BCE) on FakeAVCeleb with EAR features and hard negative mining
+
+### Current Results
+
+| Dataset | Strategy | AUC | EER |
+|---------|----------|-----|-----|
+| FakeAVCeleb (in-domain) | Max-fusion cascade | **0.9458** | **0.1445** |
+| FakeAVCeleb (sync-only) | Sync-score + BiLSTM | 0.9254 | 0.1481 |
+| DFDC (zero-shot) | Best cascade | 0.5712 | 0.4535 |
+
+Per-category AUC on FakeAVCeleb (max-fusion):
+- FV-RA (face-swap, real audio): 0.8981
+- RV-FA (real video, fake audio): **0.9278**
+- FV-FA (both swapped): **0.9902**
+
+> Cross-modal prediction pretraining + EAR features are being deployed to improve DFDC generalization (target AUC ≥ 0.72).
+
+## Architecture
+
+```
+                    ┌─────────────────┐     ┌─────────────────┐
+                    │  Mouth Crops     │     │  Raw Audio       │
+                    │  (T, 1, 96, 96) │     │  (16kHz waveform)│
+                    └────────┬────────┘     └────────┬────────┘
+                             │                       │
+                    ┌────────▼────────┐     ┌────────▼────────┐
+                    │  AV-HuBERT      │     │  Wav2Vec 2.0    │
+                    │  Visual Encoder  │     │  Audio Encoder   │
+                    │  → (B, T, 256)  │     │  → (B, T, 256)  │
+                    └────────┬────────┘     └────────┬────────┘
+                             │                       │
+                             └──────────┬────────────┘
+                                        │
+                              s(t) = cos(v_t, a_t)
+                                        │
+                             ┌──────────▼──────────┐
+                             │   Bi-LSTM Classifier │
+                             │   Input: [s(t), EAR] │
+                             │   → Real / Fake      │
+                             └─────────────────────┘
+```
 
 ## Project Structure
 
 ```
 SyncGuard/
-├── configs/              # YAML configuration files
-│   └── default.yaml
-├── data/
-│   ├── raw/              # Raw datasets (not tracked by git)
-│   ├── processed/        # Preprocessed outputs (mouth crops, audio, masks)
-│   └── features/         # Extracted embeddings
+├── configs/
+│   └── default.yaml              # All hyperparameters and data paths
 ├── src/
-│   ├── preprocessing/    # Data preprocessing pipeline
-│   │   ├── face_detector.py      # RetinaFace + MediaPipe mouth-ROI
-│   │   ├── audio_extractor.py    # Audio extraction & Wav2Vec prep
+│   ├── preprocessing/
+│   │   ├── face_detector.py      # MediaPipe FaceLandmarker + RetinaFace + EAR
+│   │   ├── audio_extractor.py    # Audio extraction & resampling
 │   │   ├── vad.py                # Silero Voice Activity Detection
-│   │   ├── dataset_loader.py     # FakeAVCeleb & CelebDF-v2 loaders
-│   │   └── pipeline.py           # End-to-end preprocessing orchestrator
-│   ├── models/           # Model architectures
-│   ├── training/         # Training loops and losses
-│   ├── evaluation/       # Metrics and evaluation scripts
-│   └── utils/            # Config loader, I/O helpers
-├── scripts/              # CLI scripts
-│   └── preprocess_dataset.py
-├── notebooks/            # Jupyter notebooks for exploration
+│   │   ├── dataset_loader.py     # FakeAVCeleb, AVSpeech, LRS2, CelebDF, DFDC
+│   │   └── pipeline.py           # End-to-end preprocessing (multiprocessing)
+│   ├── models/
+│   │   ├── visual_encoder.py     # AV-HuBERT, ResNet-18, SyncNet
+│   │   ├── audio_encoder.py      # Wav2Vec 2.0 wrapper
+│   │   ├── classifier.py         # Bi-LSTM, 1D-CNN, Statistical baseline
+│   │   ├── syncguard.py          # Full model integration
+│   │   └── audio_classifier.py   # Standalone audio deepfake classifier
+│   ├── training/
+│   │   ├── losses.py             # InfoNCE, CMP, temporal consistency, combined
+│   │   ├── dataset.py            # Dataset + collation + hard negative mining
+│   │   ├── pretrain.py           # Phase 1 contrastive pretraining loop
+│   │   └── finetune.py           # Phase 2 fine-tuning loop
+│   ├── evaluation/
+│   │   ├── metrics.py            # AUC-ROC, EER, pAUC, per-category breakdown
+│   │   ├── evaluate.py           # Inference runner
+│   │   └── visualize.py          # Publication-quality plots
+│   └── utils/
+│       ├── config.py             # YAML config loader
+│       └── io.py                 # Video/audio I/O helpers
+├── scripts/
+│   ├── preprocess_dataset.py     # CLI for preprocessing
+│   ├── train_pretrain.py         # CLI for Phase 1 pretraining
+│   ├── train_finetune.py         # CLI for Phase 2 fine-tuning
+│   ├── evaluate.py               # CLI for evaluation
+│   ├── evaluate_cascade.py       # Cascade evaluation (sync + audio fusion)
+│   ├── extract_ear_features.py   # Standalone EAR extraction
+│   ├── gpu_smoke_test.py         # GPU verification
+│   └── slurm_*.sh               # SLURM job scripts for HPC
+├── docs/
+│   ├── EXECUTION_PLAN.md         # Timeline and task tracking
+│   ├── BASELINES.md              # Expected metric ranges
+│   ├── RESEARCH.md               # Technical rationale
+│   ├── OPERATIONS.md             # Step-by-step HPC guide
+│   └── lab_notebook.md           # Experiment journal
 ├── outputs/
-│   ├── checkpoints/      # Saved model weights
-│   ├── logs/             # Training logs
-│   └── visualizations/   # Sync-score plots, figures
-├── tests/                # Unit tests
+│   ├── checkpoints/              # Model weights (gitignored)
+│   ├── logs/                     # Training metrics + experiment reports
+│   └── visualizations/           # Plots (ROC, sync-scores, ablations)
+├── notebooks/
+│   └── download_avspeech_colab.ipynb
 ├── requirements.txt
 ├── CHANGELOG.md
 └── README.md
@@ -49,16 +124,14 @@ SyncGuard/
 
 ## Setup
 
+### Local Development
+
 ```bash
-# Clone the repository
 git clone https://github.com/Akshay171124/SyncGuard.git
 cd SyncGuard
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-
-# Install dependencies
+conda create -n syncguard python=3.11 -y
+conda activate syncguard
 pip install -r requirements.txt
 
 # Ensure ffmpeg is installed
@@ -66,35 +139,81 @@ brew install ffmpeg  # macOS
 # sudo apt install ffmpeg  # Ubuntu
 ```
 
-## Preprocessing
+### HPC (Northeastern Explorer)
 
 ```bash
-# Preprocess FakeAVCeleb dataset
-python scripts/preprocess_dataset.py \
-    --dataset fakeavceleb \
-    --data_dir data/raw/FakeAVCeleb
+module load miniconda3/24.11.1 FFmpeg/7.1.1
+eval "$(conda shell.bash hook)" && conda activate syncguard
+export HF_HOME=/scratch/$USER/.cache/huggingface
 
-# Preprocess CelebDF-v2 dataset
-python scripts/preprocess_dataset.py \
-    --dataset celebdf \
-    --data_dir data/raw/CelebDF-v2
+cd /scratch/$USER/SyncGuard
+```
 
-# Test with a small subset
-python scripts/preprocess_dataset.py \
-    --dataset fakeavceleb \
-    --data_dir data/raw/FakeAVCeleb \
-    --max_samples 10
+## Usage
+
+### Preprocessing
+
+```bash
+# Preprocess FakeAVCeleb
+python scripts/preprocess_dataset.py --dataset fakeavceleb --config configs/default.yaml
+
+# Preprocess LRS2 with multiprocessing
+python scripts/preprocess_dataset.py --dataset lrs2 --config configs/default.yaml --workers 14
+
+# Extract EAR features for existing preprocessed data
+python scripts/extract_ear_features.py --dataset fakeavceleb --config configs/default.yaml
+```
+
+### Training
+
+```bash
+# Phase 1: Contrastive pretraining (InfoNCE + Cross-Modal Prediction)
+python scripts/train_pretrain.py --config configs/default.yaml
+
+# Phase 2: Fine-tuning on FakeAVCeleb with EAR features
+python scripts/train_finetune.py --config configs/default.yaml \
+    --pretrain_ckpt outputs/checkpoints/pretrain_best.pt
+```
+
+### Evaluation
+
+```bash
+# Evaluate on FakeAVCeleb
+python scripts/evaluate.py --config configs/default.yaml \
+    --checkpoint outputs/checkpoints/finetune_best.pt --test_set fakeavceleb
+
+# Cascade evaluation (sync + audio classifier fusion)
+python scripts/evaluate_cascade.py --config configs/default.yaml \
+    --sync_ckpt outputs/checkpoints/finetune_best.pt \
+    --audio_ckpt outputs/checkpoints/audio_clf_best.pt
+```
+
+### SLURM (HPC)
+
+```bash
+# Submit Phase 1 pretraining (H200 GPU, auto-resubmit)
+sbatch scripts/slurm_pretrain.sh
+
+# Submit Phase 2 fine-tuning
+sbatch scripts/slurm_finetune.sh
 ```
 
 ## Datasets
 
-| Dataset | Role | Access |
-|---------|------|--------|
-| FakeAVCeleb | Primary training | Obtained via author request |
-| VoxCeleb2 / LRS2-BBC | Contrastive pretraining | Pending |
-| CelebDF-v2 | Cross-generator test | Public download |
-| DFDC | In-the-wild test | Kaggle |
-| Wav2Lip generated | Adversarial test | Self-generated |
+| Dataset | Samples | Role | Status |
+|---------|---------|------|--------|
+| FakeAVCeleb | 21,544 | Primary train/val/test | Preprocessed |
+| AVSpeech | 24,760 | Contrastive pretraining | Preprocessed |
+| LRS2 | 96,318 | Expanded pretraining + extra reals | In progress |
+| DFDC Part 0 | 1,334 | Cross-dataset zero-shot test | Preprocessed |
+| CelebDF-v2 | 921 | Dropped (no audio streams) | N/A |
+
+## Key References
+
+- **AVFF** (CVPR 2024) — Cross-modal prediction for AV deepfake detection
+- **AV-HuBERT** — Self-supervised audio-visual speech representation
+- **Wav2Vec 2.0** — Self-supervised speech representation learning
+- **FakeAVCeleb** — Audio-visual deepfake detection benchmark
 
 ## License
 
