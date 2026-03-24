@@ -213,9 +213,10 @@ def train(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     # Initialize wandb
+    use_cmp = pt_cfg.get("cross_modal_prediction", True)
     wandb.init(
         project="SyncGuard",
-        name="phase1-pretrain-learnable-tau",
+        name="phase1-pretrain-cmp" if use_cmp else "phase1-pretrain-learnable-tau",
         config={
             "phase": "pretrain",
             "epochs": epochs,
@@ -225,11 +226,14 @@ def train(
             "warmup_epochs": pt_cfg.get("warmup_epochs", 2),
             "moco_queue_size": pt_cfg.get("moco_queue_size", 4096),
             "temperature": pt_cfg.get("temperature", 0.07),
+            "cross_modal_prediction": use_cmp,
+            "cmp_weight": pt_cfg.get("cmp_weight", 0.5),
+            "cmp_mask_ratio": pt_cfg.get("cmp_mask_ratio", 0.3),
             "dataset": "avspeech",
             "train_samples": len(train_loader.dataset),
             "val_samples": len(val_loader.dataset),
         },
-        tags=["pretrain", "contrastive", "avspeech"],
+        tags=["pretrain", "contrastive", "cross-modal-prediction"] if use_cmp else ["pretrain", "contrastive", "avspeech"],
     )
 
     # Build model, loss, optimizer, scheduler
@@ -263,6 +267,8 @@ def train(
     for epoch in range(start_epoch, epochs):
         model.train()
         epoch_loss = 0.0
+        epoch_infonce = 0.0
+        epoch_cmp = 0.0
         epoch_sync_score = 0.0
         n_batches = 0
         t_start = time.time()
@@ -281,14 +287,15 @@ def train(
             T = v_embeds.shape[1]
             mask_aligned = mask[:, :T]
 
-            # Compute loss
+            # Compute loss (InfoNCE + cross-modal prediction)
             loss_dict = criterion(v_embeds, a_embeds, mask=mask_aligned)
             loss = loss_dict["loss"]
 
-            # Backward
+            # Backward — clip grads for both model and CMP predictor heads
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            all_params = list(model.parameters()) + list(criterion.parameters())
+            torch.nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
             optimizer.step()
             scheduler.step()
 
@@ -299,12 +306,16 @@ def train(
                 avg_score = masked_scores.sum() / mask_aligned.float().sum().clamp(min=1)
 
             epoch_loss += loss.item()
+            epoch_infonce += loss_dict["loss_infonce"].item()
+            epoch_cmp += loss_dict["loss_cmp"].item()
             epoch_sync_score += avg_score.item()
             n_batches += 1
 
         # Epoch metrics
         epoch_time = time.time() - t_start
         avg_train_loss = epoch_loss / max(n_batches, 1)
+        avg_train_infonce = epoch_infonce / max(n_batches, 1)
+        avg_train_cmp = epoch_cmp / max(n_batches, 1)
         avg_train_sync = epoch_sync_score / max(n_batches, 1)
 
         # Validation
@@ -314,6 +325,8 @@ def train(
         epoch_log = {
             "epoch": epoch,
             "train_loss": avg_train_loss,
+            "train_infonce": avg_train_infonce,
+            "train_cmp": avg_train_cmp,
             "train_sync_score": avg_train_sync,
             "val_loss": val_metrics["avg_loss"],
             "val_sync_score": val_metrics["avg_sync_score"],
@@ -325,7 +338,7 @@ def train(
 
         logger.info(
             f"Epoch {epoch}/{epochs-1} ({epoch_time:.0f}s) | "
-            f"train_loss={avg_train_loss:.4f} | "
+            f"loss={avg_train_loss:.4f} (nce={avg_train_infonce:.4f} cmp={avg_train_cmp:.4f}) | "
             f"val_loss={val_metrics['avg_loss']:.4f} | "
             f"sync={val_metrics['avg_sync_score']:.4f} | "
             f"τ={val_metrics['temperature']:.4f} | "
@@ -336,6 +349,8 @@ def train(
         wandb.log({
             "epoch": epoch,
             "train/loss": avg_train_loss,
+            "train/infonce": avg_train_infonce,
+            "train/cmp": avg_train_cmp,
             "train/sync_score": avg_train_sync,
             "val/loss": val_metrics["avg_loss"],
             "val/sync_score": val_metrics["avg_sync_score"],
