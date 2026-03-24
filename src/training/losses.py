@@ -312,14 +312,133 @@ class CombinedLoss(nn.Module):
         }
 
 
+class CrossModalPredictionLoss(nn.Module):
+    """Cross-modal prediction loss (AVFF-style).
+
+    Masks a fraction of frames in one modality and uses a small MLP predictor
+    to reconstruct the masked embeddings from the other modality. Forces encoders
+    to learn deep audio-visual correspondence beyond surface-level sync.
+
+    Loss = L1 between predicted and actual embeddings at masked positions.
+
+    Args:
+        embedding_dim: Embedding dimension (default: 256).
+        hidden_dim: Predictor MLP hidden dimension (default: 512).
+        mask_ratio: Fraction of frames to mask (default: 0.3).
+    """
+
+    def __init__(
+        self,
+        embedding_dim: int = 256,
+        hidden_dim: int = 512,
+        mask_ratio: float = 0.3,
+    ):
+        super().__init__()
+        self.mask_ratio = mask_ratio
+
+        # V→A predictor: given visual embedding, predict masked audio embedding
+        self.v_to_a = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, embedding_dim),
+        )
+
+        # A→V predictor: given audio embedding, predict masked visual embedding
+        self.a_to_v = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, embedding_dim),
+        )
+
+    def _generate_mask(self, B: int, T: int, device: torch.device) -> torch.Tensor:
+        """Generate random binary mask for frames to mask.
+
+        Args:
+            B: Batch size.
+            T: Sequence length.
+            device: Torch device.
+
+        Returns:
+            (B, T) bool tensor — True = masked (predict this frame).
+        """
+        num_mask = max(1, int(T * self.mask_ratio))
+        mask = torch.zeros(B, T, dtype=torch.bool, device=device)
+        for i in range(B):
+            indices = torch.randperm(T, device=device)[:num_mask]
+            mask[i, indices] = True
+        return mask
+
+    def forward(
+        self,
+        v_embeds: torch.Tensor,
+        a_embeds: torch.Tensor,
+        padding_mask: torch.Tensor = None,
+    ) -> dict[str, torch.Tensor]:
+        """Compute cross-modal prediction loss.
+
+        Alternates masking direction: masks audio frames and predicts from visual,
+        then masks visual frames and predicts from audio. Returns average of both.
+
+        Args:
+            v_embeds: (B, T, D) L2-normalized visual embeddings
+            a_embeds: (B, T, D) L2-normalized audio embeddings
+            padding_mask: (B, T) optional mask (True = valid, False = padding)
+
+        Returns:
+            Dict with 'loss_cmp', 'loss_v2a', 'loss_a2v'
+        """
+        B, T, D = v_embeds.shape
+
+        # Direction 1: mask audio, predict from visual
+        audio_mask = self._generate_mask(B, T, v_embeds.device)
+        if padding_mask is not None:
+            audio_mask = audio_mask & padding_mask  # Only mask valid frames
+
+        a_pred = self.v_to_a(v_embeds)  # (B, T, D)
+        # L1 loss at masked positions only
+        if audio_mask.any():
+            loss_v2a = F.l1_loss(
+                a_pred[audio_mask], a_embeds[audio_mask].detach()
+            )
+        else:
+            loss_v2a = torch.tensor(0.0, device=v_embeds.device, requires_grad=True)
+
+        # Direction 2: mask visual, predict from audio
+        visual_mask = self._generate_mask(B, T, v_embeds.device)
+        if padding_mask is not None:
+            visual_mask = visual_mask & padding_mask
+
+        v_pred = self.a_to_v(a_embeds)  # (B, T, D)
+        if visual_mask.any():
+            loss_a2v = F.l1_loss(
+                v_pred[visual_mask], v_embeds[visual_mask].detach()
+            )
+        else:
+            loss_a2v = torch.tensor(0.0, device=v_embeds.device, requires_grad=True)
+
+        loss_cmp = (loss_v2a + loss_a2v) / 2.0
+
+        return {
+            "loss_cmp": loss_cmp,
+            "loss_v2a": loss_v2a.detach(),
+            "loss_a2v": loss_a2v.detach(),
+        }
+
+
 class PretrainLoss(nn.Module):
-    """Loss for Phase 1 contrastive pretraining (InfoNCE only, no classification).
+    """Loss for Phase 1 contrastive pretraining.
+
+    Combines InfoNCE contrastive loss with cross-modal prediction (AVFF-style).
+    L = L_InfoNCE + λ_cmp * L_CMP
 
     Args:
         embedding_dim: Embedding dimension (default: 256).
         queue_size: MoCo queue size (default: 4096).
         temperature: Initial temperature (default: 0.07).
         temperature_range: Clamp range for learnable temperature.
+        use_cross_modal: Whether to use cross-modal prediction loss (default: True).
+        cmp_weight: Weight for cross-modal prediction loss (default: 0.5).
+        cmp_mask_ratio: Fraction of frames to mask (default: 0.3).
     """
 
     def __init__(
@@ -328,6 +447,9 @@ class PretrainLoss(nn.Module):
         queue_size: int = 4096,
         temperature: float = 0.07,
         temperature_range: tuple[float, float] = (0.01, 0.5),
+        use_cross_modal: bool = True,
+        cmp_weight: float = 0.5,
+        cmp_mask_ratio: float = 0.3,
     ):
         super().__init__()
         self.infonce = InfoNCELoss(
@@ -336,6 +458,14 @@ class PretrainLoss(nn.Module):
             temperature=temperature,
             temperature_range=temperature_range,
         )
+        self.use_cross_modal = use_cross_modal
+        self.cmp_weight = cmp_weight
+        if use_cross_modal:
+            self.cmp = CrossModalPredictionLoss(
+                embedding_dim=embedding_dim,
+                hidden_dim=embedding_dim * 2,
+                mask_ratio=cmp_mask_ratio,
+            )
 
     @property
     def temperature(self) -> torch.Tensor:
@@ -355,14 +485,27 @@ class PretrainLoss(nn.Module):
             mask: (B, T) optional frame-level mask
 
         Returns:
-            Dict with 'loss', 'loss_infonce', 'temperature'
+            Dict with 'loss', 'loss_infonce', 'loss_cmp', 'loss_v2a', 'loss_a2v', 'temperature'
         """
         loss_infonce = self.infonce(v_embeds, a_embeds, mask=mask)
-        return {
+
+        result = {
             "loss": loss_infonce,
             "loss_infonce": loss_infonce.detach(),
             "temperature": self.temperature.detach(),
+            "loss_cmp": torch.tensor(0.0),
+            "loss_v2a": torch.tensor(0.0),
+            "loss_a2v": torch.tensor(0.0),
         }
+
+        if self.use_cross_modal:
+            cmp_result = self.cmp(v_embeds, a_embeds, padding_mask=mask)
+            result["loss"] = loss_infonce + self.cmp_weight * cmp_result["loss_cmp"]
+            result["loss_cmp"] = cmp_result["loss_cmp"].detach()
+            result["loss_v2a"] = cmp_result["loss_v2a"]
+            result["loss_a2v"] = cmp_result["loss_a2v"]
+
+        return result
 
 
 def build_pretrain_loss(config: dict) -> PretrainLoss:
@@ -374,6 +517,9 @@ def build_pretrain_loss(config: dict) -> PretrainLoss:
         queue_size=pt_cfg.get("moco_queue_size", 4096),
         temperature=pt_cfg.get("temperature", 0.07),
         temperature_range=tuple(pt_cfg.get("temperature_range", [0.01, 0.5])),
+        use_cross_modal=pt_cfg.get("cross_modal_prediction", True),
+        cmp_weight=pt_cfg.get("cmp_weight", 0.5),
+        cmp_mask_ratio=pt_cfg.get("cmp_mask_ratio", 0.3),
     )
 
 
