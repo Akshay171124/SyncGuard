@@ -37,7 +37,7 @@ model:
     model_id: "facebook/wav2vec2-base-960h"
     layer: 9  # Subject to ablation (3, 5, 7, 9, 11)
     embedding_dim: 256
-    freeze_pretrained: true
+    freeze_pretrained: false
   classifier:
     name: "bilstm"  # Options: bilstm, cnn1d, statistical
     hidden_size: 128
@@ -59,10 +59,10 @@ training:
     warmup_epochs: 2
     moco_queue_size: 4096
     temperature: 0.07
-    temperature_range: [0.01, 0.5]
+    temperature_range: [0.03, 0.5]
     # Cross-modal prediction (AVFF-style)
     cross_modal_prediction: true
-    cmp_weight: 0.5      # Weight for CMP loss relative to InfoNCE
+    cmp_weight: 100.0    # Weight for CMP loss relative to InfoNCE (scaled to match InfoNCE magnitude)
     cmp_mask_ratio: 0.3   # Fraction of frames to mask per direction
   # Phase 2: Fine-tuning on FakeAVCeleb
   finetune:
