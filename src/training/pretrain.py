@@ -264,6 +264,8 @@ def train(
         f"device={device}"
     )
 
+    total_batches = len(train_loader)
+
     for epoch in range(start_epoch, epochs):
         model.train()
         epoch_loss = 0.0
@@ -310,6 +312,18 @@ def train(
             epoch_cmp += loss_dict["loss_cmp"].item()
             epoch_sync_score += avg_score.item()
             n_batches += 1
+
+            # Per-batch progress logging
+            if n_batches % 100 == 0 or n_batches == 1:
+                elapsed = time.time() - t_start
+                eta_epoch = (elapsed / n_batches) * (total_batches - n_batches)
+                logger.info(
+                    f"[Epoch {epoch+1}/{epochs}] Batch {n_batches}/{total_batches} "
+                    f"loss={loss.item():.4f} infonce={loss_dict['loss_infonce'].item():.4f} "
+                    f"cmp={loss_dict['loss_cmp'].item():.4f} sync={avg_score.item():.3f} "
+                    f"tau={criterion.tau.item():.4f} "
+                    f"ETA={eta_epoch/60:.0f}min"
+                )
 
         # Epoch metrics
         epoch_time = time.time() - t_start
