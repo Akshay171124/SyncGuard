@@ -63,8 +63,11 @@ def run_cascade_inference(
         lengths = batch.lengths.to(device)
         labels = batch.labels
 
+        # EAR features (optional, for blink-aware classifier)
+        ear_features = batch.ear_features.to(device) if batch.ear_features is not None else None
+
         # Sync model
-        output: SyncGuardOutput = sync_model(mouth_crops, waveforms, lengths=lengths)
+        output: SyncGuardOutput = sync_model(mouth_crops, waveforms, lengths=lengths, ear_features=ear_features)
         sync_probs = torch.sigmoid(output.logits.squeeze(-1))  # (B,)
 
         # Raw sync-scores: mean cosine similarity per sample
