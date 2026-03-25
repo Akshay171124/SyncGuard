@@ -150,7 +150,7 @@ def compute_pauc(
         tpr_clipped = np.append(tpr_clipped, tpr_at_max)
 
     # Trapezoidal integration, normalized
-    _integrate = getattr(np, "trapezoid", np.trapz)
+    _integrate = getattr(np, "trapezoid", getattr(np, "trapz", None))
     pauc = _integrate(tpr_clipped, fpr_clipped) / max_fpr
     return float(pauc)
 
