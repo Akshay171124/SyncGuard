@@ -51,6 +51,8 @@ class PreprocessingPipeline:
         # VAD settings
         vad_cfg = pp_cfg["vad"]
         self.vad_threshold = vad_cfg["threshold"]
+        self.vad_min_speech_ms = vad_cfg.get("min_speech_duration_ms", 250)
+        self.vad_min_silence_ms = vad_cfg.get("min_silence_duration_ms", 100)
 
         # Output dirs
         self.processed_dir = Path(config["data"]["processed_dir"])
@@ -71,6 +73,8 @@ class PreprocessingPipeline:
         if self.vad is None:
             self.vad = VoiceActivityDetector(
                 threshold=self.vad_threshold,
+                min_speech_duration_ms=self.vad_min_speech_ms,
+                min_silence_duration_ms=self.vad_min_silence_ms,
                 sample_rate=self.sample_rate,
             )
 

@@ -8,6 +8,10 @@ import numpy as np
 def read_video_frames(video_path: str, fps: int = 25) -> tuple[np.ndarray, int]:
     """Read video frames at a target FPS.
 
+    HP-2 fix: Uses timestamp-based sampling to correctly handle any source fps.
+    For a 30fps source targeting 25fps, this produces exactly 25 frames per second
+    instead of keeping all 30 frames and mislabeling them as 25fps.
+
     Returns:
         frames: (T, H, W, 3) uint8 BGR array
         original_fps: original video FPS
@@ -17,16 +21,23 @@ def read_video_frames(video_path: str, fps: int = 25) -> tuple[np.ndarray, int]:
         raise IOError(f"Cannot open video: {video_path}")
 
     original_fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_interval = max(1, round(original_fps / fps))
+    if original_fps <= 0:
+        original_fps = 25.0  # Fallback for videos without fps metadata
 
     frames = []
     frame_idx = 0
+    next_target_time = 0.0
+    frame_duration = 1.0 / original_fps
+    target_interval = 1.0 / fps
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        if frame_idx % frame_interval == 0:
+        current_time = frame_idx * frame_duration
+        if current_time >= next_target_time - 1e-6:
             frames.append(frame)
+            next_target_time += target_interval
         frame_idx += 1
 
     cap.release()

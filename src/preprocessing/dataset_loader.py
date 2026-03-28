@@ -233,9 +233,13 @@ class DFDCLoader:
                 else:
                     label_map[fname] = int(info)
 
+        skipped = 0
         for video_file in sorted(self.root.rglob("*.mp4")):
             fname = video_file.name
-            label = label_map.get(fname, 0)
+            if fname not in label_map:
+                skipped += 1
+                continue  # HP-1: skip unknown files instead of defaulting to REAL
+            label = label_map[fname]
             category = "fake" if label == 1 else "real"
             samples.append(VideoSample(
                 video_path=str(video_file),
@@ -243,6 +247,13 @@ class DFDCLoader:
                 category=category,
                 dataset="dfdc",
             ))
+
+        if skipped > 0:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"DFDC: skipped {skipped} videos with no label in metadata. "
+                f"Loaded {len(samples)} labeled videos."
+            )
 
         return samples
 
