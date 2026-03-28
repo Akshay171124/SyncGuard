@@ -923,4 +923,63 @@ Ready to deploy to HPC. Execution order:
 
 ---
 
+## 2026-03-28 — Multi-Agent Code Review: 50 Findings, 10 Critical Fixes
+**Owner:** Akshay
+**Phase:** Review / Bug Fixes
+
+### What I Did
+Ran a 7-agent parallel code review covering code quality, architecture, experiment methodology, statistics, DFDC preprocessing parity, DFDC hypothesis viability, and silent failures. The review produced 50 findings (6 critical blockers, 2 critical strategic, 15 high, 18 warning, 9 medium/design/low).
+
+**Review agents and their findings:**
+1. **Code Quality (pr-review-toolkit):** MoCo queue bug cluster — wrong labels on empty queue, queue not persisted, validation pollution. Plus grad clipping gap, dead hard-negative code, EAR mismatch after audio-swap.
+2. **Architecture (code-explorer):** EAR not passed during evaluation (train/eval inconsistency). Visual never upsampled to 49Hz despite docs. Hardcoded dimensions not from config.
+3. **Experiment Design (general-purpose):** No random seeds anywhere. strict=False with no key logging. Missing baselines (visual-only, raw sync-score on FakeAVCeleb). Ablation confounds.
+4. **Statistics (general-purpose):** DFDC 0.5712 AUC has 95% CI [0.534, 0.609]. RV-FA sync-only 0.507 crosses 0.5. Bootstrap CIs implemented but never called.
+5. **DFDC Preprocessing (code-explorer):** 6 discrepancies — label fallback to REAL, 30fps→20% drift, RetinaFace at 1080p, VAD kills DFDC clips, no duration cap, audio codec failures.
+6. **DFDC Hypothesis (general-purpose, web search):** CMP+EAR viability rated 4/10. DFDC face-swaps preserve lip-sync — core signal is inverted (raw sync AUC 0.4378). AVFF works via full embedding fusion, not scalar sync-score. Recommended: preprocessing fixes + embedding bypass + DCT features.
+7. **Silent Failures (pr-review-toolkit):** NaN loss propagation, corrupt .npy crashes, all-false speech mask → NaN, non-atomic checkpoint save, frozen Wav2Vec group norm re-enabled by model.train().
+
+### Implemented Fixes (same day)
+All 6 critical blockers + 4 high-priority fixes in 5 source files:
+- `src/training/losses.py`: CB-1 (arange labels), CB-2 (MoCoQueue → nn.Module), CB-3 (update_queue param)
+- `src/training/pretrain.py`: CB-3 (val no queue), CB-5 (seeds), CB-6 (NaN guard), HP-8 (atomic save)
+- `src/training/finetune.py`: CB-3, CB-5, CB-6, HP-5 (grad clip), HP-6 (key logging), HP-8
+- `src/evaluation/evaluate.py`: CB-4 (EAR in inference)
+- `src/models/syncguard.py`: HP-10 (length clamping)
+
+Plus 4 DFDC preprocessing fixes in 4 files:
+- `src/preprocessing/dataset_loader.py`: HP-1 (skip unknown labels)
+- `src/utils/io.py`: HP-2 (timestamp-based fps sampling)
+- `src/preprocessing/face_detector.py`: HP-3 (resolution normalization)
+- `src/preprocessing/pipeline.py`: HP-4 (VAD params from config)
+
+### Results
+- All fixes pass syntax checks and local verification
+- Code pushed to GitHub, pulled on HPC, deployed
+- DFDC reprocessing submitted (SLURM job 5504787)
+- Phase 1 v3 pretraining submitted (SLURM job 5504788)
+- Old pretrain checkpoints backed up to `outputs/checkpoints/pre_v3_backup/`
+- Old DFDC preprocessed data backed up to `data/processed/dfdc_pre_fix_backup/`
+
+### Observations
+- The MoCo queue bugs (CB-1/2/3) explain why pretrain val_loss was ~8.25 ≈ log(4096) — pretraining barely learned anything because the queue was corrupted on every SLURM resume.
+- The DFDC preprocessing bugs (especially HP-2: 20% fps drift) may explain a significant portion of the 0.5712 AUC — the model never saw correctly-aligned DFDC data.
+- The architectural insight that sync-score compression discards identity-mismatch information is the most important strategic finding for reaching 0.72 DFDC AUC.
+
+### Decision
+- Full retraining required (Phase 1 v3 → Phase 2 v2)
+- 3-tier DFDC strategy: (1) preprocessing fixes + BN adaptation, (2) embedding bypass classifier, (3) DCT frequency features
+- Run diagnostic scripts after DFDC reprocessing completes to validate EAR viability before investing further
+- Gate check at Day 5 (Apr 2): Tier 1 DFDC AUC determines whether Tier 2/3 needed
+
+### Artifacts
+- Review design: `docs/superpowers/specs/2026-03-28-multi-agent-review-pipeline-design.md`
+- Review findings: `docs/superpowers/specs/review-findings.md` (50 findings, 16-day plan)
+- Diagnostic scripts: `scripts/diagnose_dfdc.py`, `scripts/check_dataset_fps.py`
+- Deployment scripts: `scripts/deploy_and_launch_v3.sh`, `scripts/slurm_reprocess_dfdc.sh`, `scripts/slurm_evaluate_v3.sh`
+- Commits: `bd65819` (10 critical fixes), `811d2f8` (DFDC preprocessing), `56d455b` (deployment scripts), `d741adb` (diagnostics)
+- SLURM jobs: DFDC reprocess 5504787, Phase 1 v3 pretrain 5504788
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->

@@ -2,6 +2,55 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [3.0.0] - 2026-03-28
+
+### Critical Bug Fixes (Multi-Agent Code Review)
+A 7-agent parallel review discovered 50 issues (6 critical, 15 high, 18 warning). The critical blockers invalidate prior pretraining results and require full retraining.
+
+**MoCo Queue Cluster (CB-1/2/3):**
+- **CB-1:** InfoNCE in-batch fallback used `torch.zeros(N)` instead of `torch.arange(N)` for labels — wrong contrastive target on empty queue (first batch + every resume)
+- **CB-2:** `MoCoQueue` was a plain Python class, not `nn.Module`. Queue/ptr/fullness never persisted in checkpoints. Every SLURM resume reinitialized to random noise. Converted to `nn.Module` with `register_buffer`.
+- **CB-3:** Validation calls enqueued embeddings into MoCo queue, polluting training negatives. Added `update_queue=False` parameter used during validation.
+
+**Other Critical Fixes:**
+- **CB-4:** EAR features not passed during evaluation — BiLSTM trained on 2-channel input (sync + EAR), evaluated on 1-channel. All prior EAR results invalid. Fixed in `evaluate.py`.
+- **CB-5:** No random seeds set anywhere. Added `torch.manual_seed`, `np.random.seed`, `random.seed`, `torch.cuda.manual_seed_all` to both training scripts.
+- **CB-6:** NaN loss had no guard — training continued with garbage gradients. Added check + diagnostic checkpoint save + halt.
+
+**High-Priority Fixes:**
+- **HP-5:** Finetune gradient clipping excluded criterion (learnable temperature) parameters. Fixed to clip both model + criterion.
+- **HP-6:** `load_state_dict(strict=False)` with no key logging — silently dropped mismatched weights. Now logs missing/unexpected keys.
+- **HP-8:** Checkpoint save was non-atomic — SLURM kill mid-write corrupted files. Now uses tmp file + `os.replace`.
+- **HP-10:** Lengths not clamped after `align_sequences` — could overflow `pack_padded_sequence`. Added `lengths.clamp(max=T)`.
+
+### DFDC Preprocessing Parity Fixes
+- **HP-1:** DFDC label fallback defaulted unknowns to `label=0` (REAL). Now skips unmatched files with warning.
+- **HP-2:** 30fps temporal drift — `round(30/25)=1` kept all DFDC frames but pipeline assumed 25fps, creating 20% AV misalignment. Replaced with timestamp-based sampling that correctly produces 25fps from any source.
+- **HP-3:** RetinaFace at 1920×1080 reduced detection confidence. Now downscales to max 720p before detection, scales bbox back.
+- **HP-4:** VAD `min_speech_duration_ms` and `min_silence_duration_ms` now passed from config to constructor.
+
+### Added
+- `scripts/diagnose_dfdc.py` — DFDC diagnostic suite (preprocessing quality, EAR t-tests, sync-score distributions)
+- `scripts/check_dataset_fps.py` — Source video fps spot-checker (determines reprocessing needs)
+- `scripts/slurm_reprocess_dfdc.sh` — DFDC reprocessing with all fixes
+- `scripts/slurm_evaluate_v3.sh` — Full evaluation pipeline (FakeAVCeleb + DFDC + diagnostics + bootstrap CIs)
+- `scripts/deploy_and_launch_v3.sh` — Master HPC deployment script
+- `docs/superpowers/specs/review-findings.md` — Complete 50-finding review synthesis with 16-day action plan
+
+### Impact on Prior Results
+- **All Phase 1 pretrain results invalidated** — MoCo queue bugs corrupted contrastive learning on every resume
+- **All Phase 2 finetune results invalidated** — built on corrupted Phase 1 + missing grad clipping on temperature
+- **DFDC 0.5712 AUC invalidated** — preprocessing bugs (20% fps drift, label fallback, resolution issues)
+- **FakeAVCeleb 0.9458 AUC likely reproducible** — BCE classification loss was correct, preprocessing unaffected
+- Full retraining (Phase 1 v3 → Phase 2 v2) initiated on HPC
+
+### DFDC Strategy (from review)
+- CMP+EAR hypothesis rated 4/10 viability for DFDC (face-swaps preserve lip-sync)
+- 3-tier strategy: (1) Fix preprocessing + BN adaptation, (2) Embedding bypass classifier, (3) DCT frequency features
+- Diagnostic scripts created to validate before committing to any approach
+
+---
+
 ## [2.1.0] - 2026-03-23
 
 ### Fixed
