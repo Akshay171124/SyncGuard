@@ -21,7 +21,8 @@ class ProjectionHead(nn.Module):
         x = self.fc1(x)
         x = self.relu(x)
         x = self.fc2(x)
-        x = F.normalize(x, dim=-1)
+        # Use larger eps to prevent NaN from near-zero vectors (SF-3 fix)
+        x = F.normalize(x, dim=-1, eps=1e-6)
         return x
 
 
