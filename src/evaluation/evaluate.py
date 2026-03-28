@@ -66,8 +66,9 @@ def run_inference(
         waveforms = batch.waveforms.to(device)
         lengths = batch.lengths.to(device)
         labels = batch.labels
+        ear = batch.ear_features.to(device) if batch.ear_features is not None else None
 
-        output: SyncGuardOutput = model(mouth_crops, waveforms, lengths=lengths)
+        output: SyncGuardOutput = model(mouth_crops, waveforms, lengths=lengths, ear_features=ear)
 
         # Sigmoid scores for binary classification
         probs = torch.sigmoid(output.logits.squeeze(-1))  # (B,)
