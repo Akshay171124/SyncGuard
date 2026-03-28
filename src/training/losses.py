@@ -7,11 +7,12 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 
-class MoCoQueue:
+class MoCoQueue(nn.Module):
     """MoCo-style FIFO memory bank for contrastive learning negatives.
 
     Maintains a fixed-size queue of past audio embeddings (detached, no grad).
-    Updated after each batch via enqueue_dequeue.
+    Updated after each batch via enqueue_dequeue. Registered as buffers so
+    queue state is saved/restored with checkpoints.
 
     Args:
         dim: Embedding dimension (default: 256).
@@ -19,17 +20,12 @@ class MoCoQueue:
     """
 
     def __init__(self, dim: int = 256, size: int = 4096):
+        super().__init__()
         self.size = size
         self.dim = dim
-        self.queue = torch.randn(size, dim)
-        self.queue = F.normalize(self.queue, dim=-1)
-        self.ptr = 0
-        self.full = False
-
-    def to(self, device: torch.device) -> "MoCoQueue":
-        """Move queue to device."""
-        self.queue = self.queue.to(device)
-        return self
+        self.register_buffer("queue", F.normalize(torch.randn(size, dim), dim=-1))
+        self.register_buffer("ptr", torch.zeros(1, dtype=torch.long))
+        self.register_buffer("is_full", torch.zeros(1, dtype=torch.bool))
 
     @torch.no_grad()
     def enqueue_dequeue(self, embeddings: torch.Tensor):
@@ -40,27 +36,28 @@ class MoCoQueue:
         """
         embeddings = embeddings.detach()
         batch_size = embeddings.shape[0]
+        ptr = self.ptr.item()
 
         if batch_size >= self.size:
             # If batch is larger than queue, just take the last `size` entries
-            self.queue = embeddings[-self.size:].clone()
-            self.ptr = 0
-            self.full = True
+            self.queue.copy_(embeddings[-self.size:])
+            self.ptr.fill_(0)
+            self.is_full.fill_(True)
             return
 
-        end = self.ptr + batch_size
+        end = ptr + batch_size
         if end <= self.size:
-            self.queue[self.ptr:end] = embeddings
+            self.queue[ptr:end] = embeddings
         else:
             # Wrap around
             overflow = end - self.size
-            self.queue[self.ptr:] = embeddings[:batch_size - overflow]
+            self.queue[ptr:] = embeddings[:batch_size - overflow]
             self.queue[:overflow] = embeddings[batch_size - overflow:]
-            self.full = True
+            self.is_full.fill_(True)
 
-        self.ptr = end % self.size
+        self.ptr.fill_(end % self.size)
         if end >= self.size:
-            self.full = True
+            self.is_full.fill_(True)
 
     def get_negatives(self) -> torch.Tensor:
         """Return current queue contents as negative samples.
@@ -68,9 +65,9 @@ class MoCoQueue:
         Returns:
             (K, dim) tensor where K = size if full, else ptr
         """
-        if self.full:
+        if self.is_full.item():
             return self.queue.clone()
-        return self.queue[:self.ptr].clone()
+        return self.queue[:self.ptr.item()].clone()
 
 
 class InfoNCELoss(nn.Module):
@@ -121,6 +118,7 @@ class InfoNCELoss(nn.Module):
         v_embeds: torch.Tensor,
         a_embeds: torch.Tensor,
         mask: torch.Tensor = None,
+        update_queue: bool = True,
     ) -> torch.Tensor:
         """Compute frame-level InfoNCE loss.
 
@@ -128,6 +126,7 @@ class InfoNCELoss(nn.Module):
             v_embeds: (B, T, D) L2-normalized visual embeddings
             a_embeds: (B, T, D) L2-normalized audio embeddings
             mask: (B, T) optional mask (True = valid frame, False = padding)
+            update_queue: Whether to update MoCo queue (False during validation)
 
         Returns:
             Scalar InfoNCE loss
@@ -148,13 +147,15 @@ class InfoNCELoss(nn.Module):
             neg_sim = torch.mm(v_flat, negatives.T) / tau  # (N, K)
             # Logits: positive in first column, negatives after
             logits = torch.cat([pos_sim.unsqueeze(1), neg_sim], dim=1)  # (N, 1+K)
+            # Target = 0 (positive is first column in MoCo formulation)
+            labels = torch.zeros(logits.shape[0], dtype=torch.long, device=logits.device)
         else:
             # No negatives yet (first batch) — use in-batch negatives
             all_sim = torch.mm(v_flat, a_flat.T) / tau  # (N, N)
             logits = all_sim
+            # CB-1 fix: positive for row i is column i (the diagonal)
+            labels = torch.arange(logits.shape[0], dtype=torch.long, device=logits.device)
 
-        # Cross-entropy with target = 0 (positive is first column)
-        labels = torch.zeros(logits.shape[0], dtype=torch.long, device=logits.device)
         loss = F.cross_entropy(logits, labels, reduction="none")  # (N,)
 
         # Apply mask if provided
@@ -164,8 +165,9 @@ class InfoNCELoss(nn.Module):
         else:
             loss = loss.mean()
 
-        # Update queue with current batch audio embeddings
-        self.queue.enqueue_dequeue(a_flat)
+        # Update queue with current batch audio embeddings (skip during validation)
+        if update_queue:
+            self.queue.enqueue_dequeue(a_flat)
 
         return loss
 
@@ -271,6 +273,7 @@ class CombinedLoss(nn.Module):
         labels: torch.Tensor,
         mask: torch.Tensor = None,
         audio_logits: torch.Tensor = None,
+        update_queue: bool = True,
     ) -> dict[str, torch.Tensor]:
         """Compute combined loss.
 
@@ -281,6 +284,7 @@ class CombinedLoss(nn.Module):
             labels: (B,) binary labels (0 = real, 1 = fake)
             mask: (B, T) optional frame-level mask
             audio_logits: (B, 1) audio-only classifier logits (optional)
+            update_queue: Whether to update MoCo queue (False during validation)
 
         Returns:
             Dict with 'loss' (total), 'loss_infonce', 'loss_temp', 'loss_cls',
@@ -288,7 +292,7 @@ class CombinedLoss(nn.Module):
         """
         is_real = (labels == 0)  # (B,)
 
-        loss_infonce = self.infonce(v_embeds, a_embeds, mask=mask)
+        loss_infonce = self.infonce(v_embeds, a_embeds, mask=mask, update_queue=update_queue)
         loss_temp = self.temporal(v_embeds, a_embeds, is_real=is_real, mask=mask)
         loss_cls = self.cls_criterion(logits.squeeze(-1), labels.float())
 
@@ -476,6 +480,7 @@ class PretrainLoss(nn.Module):
         v_embeds: torch.Tensor,
         a_embeds: torch.Tensor,
         mask: torch.Tensor = None,
+        update_queue: bool = True,
     ) -> dict[str, torch.Tensor]:
         """Compute pretraining loss.
 
@@ -483,11 +488,12 @@ class PretrainLoss(nn.Module):
             v_embeds: (B, T, D) visual embeddings
             a_embeds: (B, T, D) audio embeddings
             mask: (B, T) optional frame-level mask
+            update_queue: Whether to update MoCo queue (False during validation)
 
         Returns:
             Dict with 'loss', 'loss_infonce', 'loss_cmp', 'loss_v2a', 'loss_a2v', 'temperature'
         """
-        loss_infonce = self.infonce(v_embeds, a_embeds, mask=mask)
+        loss_infonce = self.infonce(v_embeds, a_embeds, mask=mask, update_queue=update_queue)
 
         result = {
             "loss": loss_infonce,

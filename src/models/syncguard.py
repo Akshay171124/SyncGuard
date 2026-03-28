@@ -147,11 +147,13 @@ class SyncGuard(nn.Module):
         # Compute sync-scores
         sync_scores = self.compute_sync_scores(v_embeds, a_embeds)  # (B, T)
 
-        # Truncate EAR features to match aligned length
+        # Truncate EAR features and clamp lengths to match aligned length
         T = sync_scores.shape[1]
         ear_aligned = None
         if ear_features is not None:
             ear_aligned = ear_features[:, :T]
+        if lengths is not None:
+            lengths = lengths.clamp(max=T)
 
         # Sync-based classification (with optional EAR features)
         sync_logits = self.classifier(sync_scores, lengths=lengths, ear_features=ear_aligned)  # (B, 1)

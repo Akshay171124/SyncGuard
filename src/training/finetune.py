@@ -12,9 +12,12 @@ Usage:
 import argparse
 import json
 import logging
+import os
+import random
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
@@ -228,12 +231,13 @@ def validate(
             T = output.v_embeds.shape[1]
             mask_aligned = mask[:, :T]
 
-            # Compute loss
+            # Compute loss — skip queue update during validation
             loss_dict = criterion(
                 output.v_embeds, output.a_embeds,
                 output.logits, labels,
                 mask=mask_aligned,
                 audio_logits=output.audio_logits,
+                update_queue=False,
             )
 
             total_loss += loss_dict["loss"].item()
@@ -289,6 +293,7 @@ def save_checkpoint(
         path: Save path.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(".pt.tmp")
     torch.save(
         {
             "epoch": epoch,
@@ -298,8 +303,9 @@ def save_checkpoint(
             "criterion_state_dict": criterion.state_dict(),
             "val_metrics": val_metrics,
         },
-        path,
+        tmp_path,
     )
+    os.replace(str(tmp_path), str(path))  # Atomic on POSIX
     logger.info(f"Checkpoint saved: {path}")
 
 
@@ -328,16 +334,33 @@ def train(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+    # CB-5: Set random seeds for reproducibility
+    seed = config.get("seed", 42)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    logger.info(f"Random seed set to {seed}")
+
     # Build model and load pretrained weights
     model = build_syncguard(config).to(device)
 
     if pretrain_ckpt:
         ckpt = torch.load(pretrain_ckpt, map_location=device, weights_only=False)
-        model.load_state_dict(ckpt["model_state_dict"], strict=False)
-        logger.info(f"Loaded pretrained weights from {pretrain_ckpt}")
+        # HP-6: Log missing/unexpected keys to verify transfer
+        missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        encoder_missing = [k for k in missing if "classifier" not in k and "audio_classifier" not in k and "fusion_weight" not in k]
+        if encoder_missing:
+            logger.error(f"ENCODER weights missing from pretrained checkpoint: {encoder_missing}")
+        if unexpected:
+            logger.warning(f"Unexpected keys in checkpoint (ignored): {unexpected}")
+        logger.info(
+            f"Loaded pretrained weights from {pretrain_ckpt} "
+            f"(missing={len(missing)} keys, unexpected={len(unexpected)} keys)"
+        )
 
     criterion = build_finetune_loss(config).to(device)
-    criterion.infonce.queue.to(device)
     optimizer = build_optimizer(model, criterion, config)
     scheduler = build_scheduler(optimizer, config, len(train_loader))
 
@@ -437,10 +460,25 @@ def train(
             )
             loss = loss_dict["loss"]
 
-            # Backward
+            # CB-6: NaN guard
+            if not torch.isfinite(loss):
+                logger.error(
+                    f"Non-finite loss at epoch {epoch}, batch {n_batches}: "
+                    f"loss={loss.item()}, tau={criterion.temperature.item():.6f}. "
+                    f"Saving diagnostic checkpoint and halting."
+                )
+                save_checkpoint(
+                    model, optimizer, scheduler, criterion,
+                    epoch, {"crash": "nan_loss", "batch": n_batches},
+                    checkpoint_dir / f"finetune_nan_crash_epoch{epoch}.pt",
+                )
+                raise RuntimeError(f"Training halted: NaN/Inf loss at epoch {epoch}")
+
+            # Backward — HP-5: clip both model and criterion (learnable temperature)
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            all_params = list(model.parameters()) + list(criterion.parameters())
+            torch.nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
             optimizer.step()
             scheduler.step()
 

@@ -10,9 +10,12 @@ Usage:
 import argparse
 import json
 import logging
+import os
+import random
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -131,8 +134,8 @@ def validate(
             T = v_embeds.shape[1]
             mask_aligned = mask[:, :T]
 
-            # Compute loss (don't update queue during validation)
-            loss_dict = criterion(v_embeds, a_embeds, mask=mask_aligned)
+            # Compute loss — skip queue update during validation
+            loss_dict = criterion(v_embeds, a_embeds, mask=mask_aligned, update_queue=False)
 
             # Compute mean sync-score
             sync_scores = model.compute_sync_scores(v_embeds, a_embeds)
@@ -176,6 +179,7 @@ def save_checkpoint(
         path: Save path.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(".pt.tmp")
     torch.save(
         {
             "epoch": epoch,
@@ -185,8 +189,9 @@ def save_checkpoint(
             "criterion_state_dict": criterion.state_dict(),
             "val_metrics": val_metrics,
         },
-        path,
+        tmp_path,
     )
+    os.replace(str(tmp_path), str(path))  # Atomic on POSIX
     logger.info(f"Checkpoint saved: {path}")
 
 
@@ -211,6 +216,15 @@ def train(
     log_path = Path("outputs/logs/pretrain.json")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    # CB-5: Set random seeds for reproducibility
+    seed = config.get("seed", 42)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    logger.info(f"Random seed set to {seed}")
 
     # Initialize wandb
     use_cmp = pt_cfg.get("cross_modal_prediction", True)
@@ -239,7 +253,6 @@ def train(
     # Build model, loss, optimizer, scheduler
     model = build_syncguard(config).to(device)
     criterion = build_pretrain_loss(config).to(device)
-    criterion.infonce.queue.to(device)
     optimizer = build_optimizer(model, criterion, config)
     scheduler = build_scheduler(optimizer, config, len(train_loader))
 
@@ -293,6 +306,20 @@ def train(
             loss_dict = criterion(v_embeds, a_embeds, mask=mask_aligned)
             loss = loss_dict["loss"]
 
+            # CB-6: NaN guard — halt immediately instead of corrupting weights
+            if not torch.isfinite(loss):
+                logger.error(
+                    f"Non-finite loss at epoch {epoch}, batch {n_batches}: "
+                    f"loss={loss.item()}, tau={criterion.temperature.item():.6f}. "
+                    f"Saving diagnostic checkpoint and halting."
+                )
+                save_checkpoint(
+                    model, optimizer, scheduler, criterion,
+                    epoch, {"crash": "nan_loss", "batch": n_batches},
+                    checkpoint_dir / f"pretrain_nan_crash_epoch{epoch}.pt",
+                )
+                raise RuntimeError(f"Training halted: NaN/Inf loss at epoch {epoch}")
+
             # Backward — clip grads for both model and CMP predictor heads
             optimizer.zero_grad()
             loss.backward()
@@ -321,7 +348,7 @@ def train(
                     f"[Epoch {epoch+1}/{epochs}] Batch {n_batches}/{total_batches} "
                     f"loss={loss.item():.4f} infonce={loss_dict['loss_infonce'].item():.4f} "
                     f"cmp={loss_dict['loss_cmp'].item():.4f} sync={avg_score.item():.3f} "
-                    f"tau={criterion.tau.item():.4f} "
+                    f"tau={criterion.temperature.item():.4f} "
                     f"ETA={eta_epoch/60:.0f}min"
                 )
 
