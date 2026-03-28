@@ -1,6 +1,6 @@
 # SyncGuard — Experiment Summary
 
-**Last updated:** 2026-03-23
+**Last updated:** 2026-03-28
 **Team:** Akshay, Ritik, Atharva
 
 This document consolidates all experiment runs, results, and key findings across the entire project. For detailed per-experiment analysis, see the individual experiment reports linked in each section.
@@ -23,9 +23,32 @@ This document consolidates all experiment runs, results, and key findings across
 | 10 | Cross-dataset eval (DFDC) | Mar 22 | Eval | AUC=0.5712 (random) | Complete |
 | 11 | EAR extraction | Mar 23 | Preprocessing | 21,059 samples | Complete |
 | 12 | LRS2 preprocessing | Mar 23 | Preprocessing | 18,453/96,318 | In progress |
-| 13 | Pretrain v2 (CMP + LRS2) | Pending | Pretrain | — | Blocked on #12 |
-| 14 | Finetune v2 (EAR features) | Pending | Finetune | — | Blocked on #13 |
-| 15 | DFDC re-evaluation | Pending | Eval | Target ≥ 0.72 | Blocked on #14 |
+| 13 | **v3.0.0 Multi-Agent Review** | Mar 28 | Review | 50 findings, 6 critical | **Complete** |
+| 14 | DFDC reprocessing (HP-1/2/3/4 fixes) | Mar 28 | Preprocessing | — | In progress (job 5504787) |
+| 15 | Pretrain v3 (CMP + LRS2 + all fixes) | Mar 28 | Pretrain | — | In progress (job 5504788) |
+| 16 | Finetune v2 (EAR + all fixes) | Pending | Finetune | — | Blocked on #15 |
+| 17 | DFDC re-evaluation (reprocessed) | Pending | Eval | Target ≥ 0.72 | Blocked on #14, #16 |
+
+---
+
+## Experiment 13: v3.0.0 Multi-Agent Code Review (Mar 28)
+
+### What Happened
+7 specialist agents reviewed the full codebase in parallel, producing 50 findings. Key discoveries:
+
+**Prior results invalidated:**
+- Experiments 1-2 (pretrain): MoCo queue corrupted on every SLURM resume (CB-1/2/3). Val loss ~8.25 ≈ log(4096) suggests pretraining barely learned.
+- Experiments 3-6 (finetune): Built on corrupted pretrain + temperature not gradient-clipped (HP-5).
+- Experiment 10 (DFDC eval): Preprocessing had 20% fps drift (HP-2), label fallback (HP-1), resolution issues (HP-3).
+
+**Strategic finding:**
+- CMP+EAR hypothesis rated 4/10 for DFDC — face-swaps preserve lip-sync, so CMP won't help through sync-score bottleneck.
+- Raw sync-score AUC on DFDC is 0.4378 (inverted) — core signal is anti-correlated.
+- Recommended 3-tier strategy: (1) preprocessing fixes + BN adaptation, (2) embedding bypass, (3) DCT features.
+
+**10 critical+high fixes implemented and deployed.** Full retraining initiated (experiments 15-17).
+
+See: `docs/superpowers/specs/review-findings.md`
 
 ---
 

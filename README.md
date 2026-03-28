@@ -25,13 +25,18 @@ SyncGuard detects deepfake videos by measuring the temporal coherence between sp
 - **Phase 1 — Contrastive Pretraining:** InfoNCE + Cross-Modal Prediction (AVFF-style) on AVSpeech + LRS2 (~117K real clips)
 - **Phase 2 — Fine-tuning:** Combined loss (InfoNCE + temporal consistency + BCE) on FakeAVCeleb with EAR features and hard negative mining
 
-### Current Results
+### Results (v2.x — pre-review baseline)
 
-| Dataset | Strategy | AUC | EER |
-|---------|----------|-----|-----|
-| FakeAVCeleb (in-domain) | Max-fusion cascade | **0.9458** | **0.1445** |
-| FakeAVCeleb (sync-only) | Sync-score + BiLSTM | 0.9254 | 0.1481 |
-| DFDC (zero-shot) | Best cascade | 0.5712 | 0.4535 |
+> **Note (Mar 28):** A multi-agent code review (v3.0.0) found critical bugs in the training pipeline
+> that invalidate prior results. Phase 1 pretrain had MoCo queue corruption on every SLURM resume.
+> DFDC preprocessing had 20% temporal drift. Full retraining is in progress. Results below are from
+> the pre-fix baseline and will be updated once v3 training completes.
+
+| Dataset | Strategy | AUC | EER | Status |
+|---------|----------|-----|-----|--------|
+| FakeAVCeleb (in-domain) | Max-fusion cascade | **0.9458** | **0.1445** | Likely reproducible |
+| FakeAVCeleb (sync-only) | Sync-score + BiLSTM | 0.9254 | 0.1481 | Likely reproducible |
+| DFDC (zero-shot) | Best cascade | 0.5712 | 0.4535 | **Invalidated** (preprocessing bugs) |
 
 Per-category AUC on FakeAVCeleb (max-fusion):
 - FV-RA (face-swap, real audio): 0.8981

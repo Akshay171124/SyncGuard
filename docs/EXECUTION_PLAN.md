@@ -6,7 +6,16 @@
 
 ---
 
-## Current State (Updated Mar 23, 2026)
+## Current State (Updated Mar 28, 2026)
+
+### ⚠ Prior Results Invalidated (v3.0.0 Review)
+On Mar 28, a 7-agent code review found 50 issues including 6 critical blockers. Key impact:
+- **Phase 1 pretrain results invalidated** — MoCo queue bugs corrupted contrastive learning on every SLURM resume (CB-1/2/3)
+- **Phase 2 finetune results invalidated** — built on corrupted Phase 1 + missing grad clipping on temperature (HP-5)
+- **DFDC 0.5712 AUC invalidated** — preprocessing had 20% fps drift, label fallback bug, resolution issues (HP-1/2/3)
+- **FakeAVCeleb 0.9458 AUC likely reproducible** — BCE loss was correct, preprocessing unaffected
+- All 10 critical+high fixes implemented and deployed. Full retraining initiated.
+- See `docs/superpowers/specs/review-findings.md` for complete findings.
 
 ### Done
 - Preprocessing pipeline (RetinaFace + MediaPipe mouth-ROI, audio extraction, Silero-VAD, temporal alignment)
@@ -38,8 +47,10 @@
 - **DFDC Part 0:** Preprocessed 1,334 clips — all cascade strategies at random chance (best AUC 0.5712). Face-swaps preserve lip-sync, so sync-scores don't discriminate.
 - **Raw sync-score thresholding:** AUC 0.4378 on DFDC — encoder representations don't generalize, not just classifier.
 
-### In Progress (HPC Deployment — Mar 23)
-- **LRS2 preprocessing:** ~18,453/96,318 processed, job auto-resuming after preemption (SLURM job 5392595). Multiprocessing with 14 workers, ~190 samples/min.
+### In Progress (v3 Retraining — Mar 28)
+- **DFDC reprocessing** with corrected pipeline (SLURM job 5504787) — fixes fps drift, label fallback, resolution normalization
+- **Phase 1 v3 pretraining** (SLURM job 5504788) — all MoCo/seed/NaN fixes applied, CMP + AVSpeech + LRS2
+- **LRS2 preprocessing:** ~18,453/96,318 processed, continuing with corrected fps sampling
 
 ### Completed (HPC Deployment — Mar 23)
 - **EAR extraction:** FakeAVCeleb (19,725) + DFDC (1,334) — all ear_features.npy saved ✓
@@ -55,6 +66,21 @@
 4. **Phase 1 CMP pretraining** on AVSpeech + LRS2 (20 epochs, H200) — blocked on LRS2 preprocessing
 5. Phase 2 fine-tuning with EAR + LRS2 reals on FakeAVCeleb (30 epochs, H200)
 6. Re-evaluate on DFDC with new model
+
+### Revised Timeline (16 days: Mar 28 — Apr 13)
+
+| Phase | Days | Tasks | Owner |
+|-------|------|-------|-------|
+| 0: Bug fixes | 1-2 (Mar 28-29) | All critical fixes ✅, DFDC reprocess, verify | All |
+| 1: Pretraining v3 | 3-6 (Mar 30–Apr 2) | CMP pretrain on H200, DFDC diagnostics, BN adaptation | Ritik, Atharva |
+| 2: Finetuning v2 | 7-8 (Apr 3-4) | Finetune + Tier 2 embedding bypass if needed | Ritik, Akshay |
+| 3: Evaluation | 9-11 (Apr 5-7) | Full eval, DFDC Tier 2/3, ablations | All |
+| 4: Paper | 12-16 (Apr 8-13) | Writing, figures, poster, submission | All |
+
+**Gate checks:**
+- Day 5 (Apr 2): Tier 1 DFDC AUC after preprocessing fixes + BN adaptation
+- Day 9 (Apr 5): Full results table — go/no-go on Tier 3
+- Day 11 (Apr 7): All results final, begin paper
 
 ### Not Started
 - Ablation experiments (visual encoder, Wav2Vec layer, classifier)
