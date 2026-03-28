@@ -65,10 +65,24 @@ class FaceDetector:
     def detect_face(self, frame: np.ndarray) -> dict | None:
         """Detect the primary face in a frame using RetinaFace.
 
+        HP-3: Downscales high-res frames before detection to maintain
+        consistent confidence scores across resolutions.
+
         Returns:
             Dict with 'bbox' (x1, y1, x2, y2) and 'confidence', or None.
         """
-        detections = RetinaFace.detect_faces(frame)
+        h, w = frame.shape[:2]
+        max_dim = 720
+        scale = 1.0
+
+        # HP-3: Normalize resolution for consistent detection across datasets
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            detect_frame = cv2.resize(frame, (int(w * scale), int(h * scale)))
+        else:
+            detect_frame = frame
+
+        detections = RetinaFace.detect_faces(detect_frame)
         if not isinstance(detections, dict) or len(detections) == 0:
             return None
 
@@ -79,8 +93,13 @@ class FaceDetector:
         if det["score"] < self.confidence_threshold:
             return None
 
+        # Scale bbox back to original resolution
+        bbox = det["facial_area"]  # [x1, y1, x2, y2]
+        if scale != 1.0:
+            bbox = [int(c / scale) for c in bbox]
+
         return {
-            "bbox": det["facial_area"],  # [x1, y1, x2, y2]
+            "bbox": bbox,
             "confidence": det["score"],
         }
 
