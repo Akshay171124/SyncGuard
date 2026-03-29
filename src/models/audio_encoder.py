@@ -69,17 +69,17 @@ class Wav2Vec2AudioEncoder(nn.Module):
         logger.info("Froze Wav2Vec 2.0 backbone")
 
     def train(self, mode: bool = True):
-        """Override to keep Wav2Vec feature extractor in inference mode (SF-6 fix).
+        """Override to keep entire Wav2Vec backbone in inference mode (SF-6 fix).
 
-        Wav2Vec's feature extractor uses group normalization which produces NaN
-        on zero-padded waveforms when computing batch statistics. The feature
-        extractor must stay in inference mode even when the backbone is unfrozen.
+        Wav2Vec2 produces NaN on padded waveforms when normalization layers run
+        in training mode. The entire backbone stays in inference mode but with
+        requires_grad=True, so gradients still flow for fine-tuning.
+        Only the projection head follows the normal train/inference toggle.
         """
         super().train(mode)
-        # Always keep the CNN feature extractor in inference mode
-        # (group norm + zero padding = NaN when computing batch stats)
-        self.wav2vec2.feature_extractor.training = False
-        for module in self.wav2vec2.feature_extractor.modules():
+        # Keep entire wav2vec2 in inference mode (gradients still flow)
+        self.wav2vec2.training = False
+        for module in self.wav2vec2.modules():
             module.training = False
         return self
 
