@@ -50,6 +50,7 @@ class SyncGuardBatch:
     lengths: torch.Tensor
     categories: list[str]
     speaker_ids: list[str]
+    sample_ids: list[str] = None
     ear_features: torch.Tensor = None
 
 
@@ -342,6 +343,7 @@ class SyncGuardDataset(Dataset):
             "is_real": label == 0,
             "category": category,
             "speaker_id": sample.speaker_id,
+            "sample_id": str(feature_dir),
             "num_frames": mouth_crops.shape[0],
             "ear_features": ear,  # (T,)
         }
@@ -376,6 +378,7 @@ def collate_syncguard(batch: list[dict]) -> SyncGuardBatch:
     is_real = torch.zeros(B, dtype=torch.bool)
     categories = []
     speaker_ids = []
+    sample_ids = []
 
     for i, item in enumerate(batch):
         T = item["num_frames"]
@@ -391,6 +394,7 @@ def collate_syncguard(batch: list[dict]) -> SyncGuardBatch:
         is_real[i] = item["is_real"]
         categories.append(item["category"])
         speaker_ids.append(item["speaker_id"])
+        sample_ids.append(item.get("sample_id", ""))
 
     return SyncGuardBatch(
         mouth_crops=mouth_crops,
@@ -401,6 +405,7 @@ def collate_syncguard(batch: list[dict]) -> SyncGuardBatch:
         lengths=lengths,
         categories=categories,
         speaker_ids=speaker_ids,
+        sample_ids=sample_ids,
         ear_features=ear_features,
     )
 
