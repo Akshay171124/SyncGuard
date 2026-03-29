@@ -303,9 +303,15 @@ def train(
             # Skip batch if embeddings contain NaN (corrupt data sample)
             if v_embeds.isnan().any() or a_embeds.isnan().any():
                 nan_skips += 1
+                # Identify which samples in the batch have NaN
+                bad_samples = []
+                for i in range(v_embeds.shape[0]):
+                    if v_embeds[i].isnan().any() or a_embeds[i].isnan().any():
+                        sid = batch.sample_ids[i] if batch.sample_ids else f"idx={i}"
+                        bad_samples.append(sid)
                 logger.warning(
-                    f"NaN embeddings at epoch {epoch}, batch {n_batches} "
-                    f"(v_nan={v_embeds.isnan().any()}, a_nan={a_embeds.isnan().any()}). "
+                    f"NaN embeddings at epoch {epoch}, batch {n_batches}. "
+                    f"Bad samples: {bad_samples}. "
                     f"Skipping batch. Total skips: {nan_skips}"
                 )
                 scheduler.step()
@@ -323,9 +329,11 @@ def train(
             # CB-6: NaN guard — skip batch instead of corrupting weights
             if not torch.isfinite(loss):
                 nan_skips += 1
+                sample_ids = batch.sample_ids if batch.sample_ids else ["unknown"]
                 logger.warning(
                     f"Non-finite loss at epoch {epoch}, batch {n_batches}: "
                     f"loss={loss.item()}, tau={criterion.temperature.item():.6f}. "
+                    f"Samples: {sample_ids[:3]}... "
                     f"Skipping batch. Total skips: {nan_skips}"
                 )
                 if nan_skips > 50:
