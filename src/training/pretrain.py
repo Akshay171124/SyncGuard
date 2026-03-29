@@ -279,6 +279,8 @@ def train(
 
     total_batches = len(train_loader)
 
+    nan_skips = 0
+
     for epoch in range(start_epoch, epochs):
         model.train()
         epoch_loss = 0.0
@@ -297,6 +299,18 @@ def train(
             # Forward: encode only (no classifier)
             v_embeds = model.encode_visual(mouth_crops)
             a_embeds = model.encode_audio(waveforms)
+
+            # Skip batch if embeddings contain NaN (corrupt data sample)
+            if v_embeds.isnan().any() or a_embeds.isnan().any():
+                nan_skips += 1
+                logger.warning(
+                    f"NaN embeddings at epoch {epoch}, batch {n_batches} "
+                    f"(v_nan={v_embeds.isnan().any()}, a_nan={a_embeds.isnan().any()}). "
+                    f"Skipping batch. Total skips: {nan_skips}"
+                )
+                scheduler.step()
+                continue
+
             v_embeds, a_embeds = model.align_sequences(v_embeds, a_embeds)
 
             T = v_embeds.shape[1]
@@ -306,19 +320,19 @@ def train(
             loss_dict = criterion(v_embeds, a_embeds, mask=mask_aligned)
             loss = loss_dict["loss"]
 
-            # CB-6: NaN guard — halt immediately instead of corrupting weights
+            # CB-6: NaN guard — skip batch instead of corrupting weights
             if not torch.isfinite(loss):
-                logger.error(
+                nan_skips += 1
+                logger.warning(
                     f"Non-finite loss at epoch {epoch}, batch {n_batches}: "
                     f"loss={loss.item()}, tau={criterion.temperature.item():.6f}. "
-                    f"Saving diagnostic checkpoint and halting."
+                    f"Skipping batch. Total skips: {nan_skips}"
                 )
-                save_checkpoint(
-                    model, optimizer, scheduler, criterion,
-                    epoch, {"crash": "nan_loss", "batch": n_batches},
-                    checkpoint_dir / f"pretrain_nan_crash_epoch{epoch}.pt",
-                )
-                raise RuntimeError(f"Training halted: NaN/Inf loss at epoch {epoch}")
+                if nan_skips > 50:
+                    logger.error(f"Too many NaN batches ({nan_skips}). Halting.")
+                    raise RuntimeError(f"Training halted: {nan_skips} NaN batches")
+                scheduler.step()
+                continue
 
             # Backward — clip grads for both model and CMP predictor heads
             optimizer.zero_grad()

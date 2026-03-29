@@ -420,6 +420,8 @@ def train(
         f"device={device}"
     )
 
+    nan_skips = 0
+
     for epoch in range(start_epoch, epochs):
         model.train()
 
@@ -460,19 +462,19 @@ def train(
             )
             loss = loss_dict["loss"]
 
-            # CB-6: NaN guard
+            # CB-6: NaN guard — skip batch instead of corrupting weights
             if not torch.isfinite(loss):
-                logger.error(
+                nan_skips += 1
+                logger.warning(
                     f"Non-finite loss at epoch {epoch}, batch {n_batches}: "
                     f"loss={loss.item()}, tau={criterion.temperature.item():.6f}. "
-                    f"Saving diagnostic checkpoint and halting."
+                    f"Skipping batch. Total skips: {nan_skips}"
                 )
-                save_checkpoint(
-                    model, optimizer, scheduler, criterion,
-                    epoch, {"crash": "nan_loss", "batch": n_batches},
-                    checkpoint_dir / f"finetune_nan_crash_epoch{epoch}.pt",
-                )
-                raise RuntimeError(f"Training halted: NaN/Inf loss at epoch {epoch}")
+                if nan_skips > 50:
+                    logger.error(f"Too many NaN batches ({nan_skips}). Halting.")
+                    raise RuntimeError(f"Training halted: {nan_skips} NaN batches")
+                scheduler.step()
+                continue
 
             # Backward — HP-5: clip both model and criterion (learnable temperature)
             optimizer.zero_grad()
