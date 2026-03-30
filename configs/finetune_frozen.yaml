@@ -1,0 +1,89 @@
+data:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  features_dir: data/processed
+  fakeavceleb_dir: data/raw/FakeAVCeleb
+  avspeech_dir: data/raw/AVSpeech
+  celebdf_dir: data/raw/CelebDF-v2
+  dfdc_dir: data/raw/DFDC/dfdc_train_part_0
+  lrs2_dir: data/raw/LRS2/mvlrs_v1/pretrain
+preprocessing:
+  video:
+    fps: 25
+    mouth_crop_size: 96
+    face_detection_confidence: 0.8
+    face_detection_backend: retinaface
+  audio:
+    sample_rate: 16000
+    target_fps: 49
+  vad:
+    threshold: 0.5
+    min_speech_duration_ms: 250
+    min_silence_duration_ms: 100
+model:
+  visual_encoder:
+    name: av_hubert
+    embedding_dim: 256
+    freeze_pretrained: false
+  audio_encoder:
+    name: wav2vec2
+    model_id: facebook/wav2vec2-base-960h
+    layer: 9
+    embedding_dim: 256
+    freeze_pretrained: true
+  classifier:
+    name: bilstm
+    hidden_size: 128
+    num_layers: 2
+    dropout: 0.3
+    use_ear: true
+  audio_head: false
+  cross_attention:
+    enabled: true
+    num_heads: 2
+    num_layers: 1
+    dropout: 0.1
+    embed_classifier_hidden: 256
+    fusion_init: 0.0
+training:
+  pretrain:
+    epochs: 20
+    batch_size: 32
+    lr: 0.0001
+    weight_decay: 1.0e-05
+    scheduler: cosine
+    warmup_epochs: 2
+    moco_queue_size: 4096
+    temperature: 0.07
+    temperature_range:
+    - 0.03
+    - 0.5
+    cross_modal_prediction: true
+    cmp_weight: 100.0
+    cmp_mask_ratio: 0.3
+  finetune:
+    epochs: 30
+    batch_size: 16
+    lr: 5.0e-05
+    weight_decay: 0.0001
+    scheduler: cosine
+    warmup_epochs: 3
+    gamma: 0.5
+    delta: 1.0
+    hard_negative_ratio: 0.2
+    hard_negative_anneal_epochs: 10
+    audio_swap_ratio: 0.15
+evaluation:
+  metrics:
+  - auc_roc
+  - eer
+  - pauc_fpr01
+  test_sets:
+  - fakeavceleb
+  - celebdf
+  - dfdc
+  - wavlip_adversarial
+hardware:
+  device: auto
+  num_workers: 4
+  pin_memory: true
