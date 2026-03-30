@@ -9,6 +9,7 @@ from src.models.visual_encoder import build_visual_encoder
 from src.models.audio_encoder import build_audio_encoder
 from src.models.classifier import build_classifier, AudioClassifier
 from src.models.cross_attention import build_cross_attention
+from src.models.dct_extractor import build_dct_extractor
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,12 @@ class SyncGuard(nn.Module):
                 torch.tensor(float(ca_cfg.get("fusion_init", 0.0)))
             )
             logger.info("Cross-attention embedding bypass enabled")
+
+        # DCT frequency-domain feature extractor (for face-swap artifact detection)
+        self.use_dct = config["model"].get("dct_extractor", {}).get("enabled", False)
+        if self.use_dct:
+            self.dct_extractor = build_dct_extractor(config)
+            logger.info("DCT feature extractor enabled")
 
         logger.info(
             f"SyncGuard initialized: "
@@ -189,7 +196,13 @@ class SyncGuard(nn.Module):
             v_attended, a_attended = self.cross_attn(
                 v_embeds, a_embeds, key_padding_mask=attn_padding_mask,
             )
-            embed_logits = self.embed_classifier(v_attended, a_attended, lengths=lengths)
+
+            # DCT features fused into embed classifier
+            dct_feats = None
+            if self.use_dct:
+                dct_feats = self.dct_extractor(mouth_crops[:, :T])
+
+            embed_logits = self.embed_classifier(v_attended, a_attended, lengths=lengths, dct_features=dct_feats)
 
             w_ca = torch.sigmoid(self.ca_fusion_weight)
             logits = w_ca * sync_logits + (1 - w_ca) * embed_logits

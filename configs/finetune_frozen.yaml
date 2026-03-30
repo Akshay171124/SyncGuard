@@ -45,6 +45,10 @@ model:
     dropout: 0.1
     embed_classifier_hidden: 256
     fusion_init: 0.0
+  dct_extractor:
+    enabled: true
+    output_dim: 16
+    dropout: 0.2
 training:
   pretrain:
     epochs: 20
