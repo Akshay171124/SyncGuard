@@ -8,6 +8,7 @@ import torch.nn.functional as F
 from src.models.visual_encoder import build_visual_encoder
 from src.models.audio_encoder import build_audio_encoder
 from src.models.classifier import build_classifier, AudioClassifier
+from src.models.cross_attention import build_cross_attention
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class SyncGuardOutput:
     a_embeds: torch.Tensor
     sync_logits: torch.Tensor = None
     audio_logits: torch.Tensor = None
+    embed_logits: torch.Tensor = None  # Cross-attention path output
 
 
 class SyncGuard(nn.Module):
@@ -67,6 +69,16 @@ class SyncGuard(nn.Module):
             # Learnable fusion weight (sigmoid → [0,1])
             self.fusion_weight = nn.Parameter(torch.tensor(0.0))
             logger.info("Audio-only classification head enabled")
+
+        # Cross-attention embedding bypass (for face-swap detection)
+        self.use_cross_attention = config["model"].get("cross_attention", {}).get("enabled", False)
+        if self.use_cross_attention:
+            self.cross_attn, self.embed_classifier = build_cross_attention(config)
+            ca_cfg = config["model"].get("cross_attention", {})
+            self.ca_fusion_weight = nn.Parameter(
+                torch.tensor(float(ca_cfg.get("fusion_init", 0.0)))
+            )
+            logger.info("Cross-attention embedding bypass enabled")
 
         logger.info(
             f"SyncGuard initialized: "
@@ -158,15 +170,29 @@ class SyncGuard(nn.Module):
         # Sync-based classification (with optional EAR features)
         sync_logits = self.classifier(sync_scores, lengths=lengths, ear_features=ear_aligned)  # (B, 1)
 
-        # Audio-only classification (for RV-FA detection)
+        # Determine base logits from sync path (+ optional audio head)
         audio_logits = None
         if self.use_audio_head:
-            audio_logits = self.audio_classifier(a_embeds, lengths=lengths)  # (B, 1)
-            # Fuse: learnable weighted average of sync and audio logits
-            w = torch.sigmoid(self.fusion_weight)
-            logits = (1 - w) * sync_logits + w * audio_logits
+            audio_logits = self.audio_classifier(a_embeds, lengths=lengths)
+            w_audio = torch.sigmoid(self.fusion_weight)
+            logits = (1 - w_audio) * sync_logits + w_audio * audio_logits
         else:
             logits = sync_logits
+
+        # Cross-attention embedding bypass (overrides logits with fused output)
+        embed_logits = None
+        if self.use_cross_attention:
+            attn_padding_mask = None
+            if lengths is not None:
+                attn_padding_mask = torch.arange(T, device=v_embeds.device).unsqueeze(0) >= lengths.unsqueeze(1)
+
+            v_attended, a_attended = self.cross_attn(
+                v_embeds, a_embeds, key_padding_mask=attn_padding_mask,
+            )
+            embed_logits = self.embed_classifier(v_attended, a_attended, lengths=lengths)
+
+            w_ca = torch.sigmoid(self.ca_fusion_weight)
+            logits = w_ca * sync_logits + (1 - w_ca) * embed_logits
 
         return SyncGuardOutput(
             logits=logits,
@@ -175,6 +201,7 @@ class SyncGuard(nn.Module):
             a_embeds=a_embeds,
             sync_logits=sync_logits,
             audio_logits=audio_logits,
+            embed_logits=embed_logits,
         )
 
     def encode_visual(self, mouth_crops: torch.Tensor) -> torch.Tensor:
