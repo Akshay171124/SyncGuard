@@ -64,15 +64,21 @@ class CrossAttentionModule(nn.Module):
 class EmbedClassifier(nn.Module):
     """Classifier on cross-attended AV embeddings with temporal pooling.
 
+    Optionally fuses DCT frequency-domain features for face-swap detection.
+
     Args:
         embed_dim: Per-modality embedding dimension (default: 256).
         hidden_dim: MLP hidden dimension (default: 256).
         dropout: MLP dropout (default: 0.3).
+        dct_dim: DCT feature dimension per frame (0 = no DCT, default: 0).
     """
 
-    def __init__(self, embed_dim: int = 256, hidden_dim: int = 256, dropout: float = 0.3):
+    def __init__(self, embed_dim: int = 256, hidden_dim: int = 256, dropout: float = 0.3, dct_dim: int = 0):
         super().__init__()
-        pool_dim = embed_dim * 2 * 2
+        self.dct_dim = dct_dim
+        # Input: concat of [v_attended; a_attended; dct_features] mean+max pooled
+        # = (2 * embed_dim + dct_dim) * 2 (mean + max)
+        pool_dim = (embed_dim * 2 + dct_dim) * 2
         self.classifier = nn.Sequential(
             nn.Linear(pool_dim, hidden_dim),
             nn.ReLU(inplace=True),
@@ -85,6 +91,7 @@ class EmbedClassifier(nn.Module):
         v_attended: torch.Tensor,
         a_attended: torch.Tensor,
         lengths: torch.Tensor = None,
+        dct_features: torch.Tensor = None,
     ) -> torch.Tensor:
         """Classify cross-attended embeddings.
 
@@ -92,11 +99,15 @@ class EmbedClassifier(nn.Module):
             v_attended: (B, T, D) cross-attended visual embeddings
             a_attended: (B, T, D) cross-attended audio embeddings
             lengths: (B,) valid sequence lengths for masked pooling
+            dct_features: (B, T, dct_dim) DCT features (optional)
 
         Returns:
             (B, 1) classification logits (pre-sigmoid)
         """
-        combined = torch.cat([v_attended, a_attended], dim=-1)
+        parts = [v_attended, a_attended]
+        if dct_features is not None and self.dct_dim > 0:
+            parts.append(dct_features)
+        combined = torch.cat(parts, dim=-1)
 
         if lengths is not None:
             mask = torch.arange(combined.shape[1], device=combined.device).unsqueeze(0)
@@ -127,10 +138,14 @@ def build_cross_attention(config: dict) -> tuple[CrossAttentionModule, EmbedClas
         num_heads=ca_cfg.get("num_heads", 2),
         dropout=ca_cfg.get("dropout", 0.1),
     )
+    dct_cfg = config["model"].get("dct_extractor", {})
+    dct_dim = dct_cfg.get("output_dim", 0) if dct_cfg.get("enabled", False) else 0
+
     embed_clf = EmbedClassifier(
         embed_dim=embed_dim,
         hidden_dim=ca_cfg.get("embed_classifier_hidden", 256),
         dropout=dropout,
+        dct_dim=dct_dim,
     )
 
     total_params = sum(p.numel() for p in cross_attn.parameters()) + sum(p.numel() for p in embed_clf.parameters())
