@@ -289,20 +289,23 @@ def main():
 
     config = load_config(args.config)
 
-    from src.training.dataset import build_dataloaders
-
-    # Build FakeAVCeleb dataloaders (speaker-disjoint train/val/test split)
-    loaders = build_dataloaders(config, phase="finetune")
+    from src.training.dataset import build_dataloaders, build_test_dataloader
 
     test_loaders = {}
     for name in args.test_sets:
         if name == "fakeavceleb":
+            # FakeAVCeleb uses speaker-disjoint test split
+            loaders = build_dataloaders(config, phase="finetune")
             test_loaders[name] = loaders["test"]
+        elif name in ("dfdc", "celebdf"):
+            # Cross-dataset evaluation — load entire dataset
+            try:
+                test_loaders[name] = build_test_dataloader(config, name)
+                logger.info(f"Loaded {name} test set: {len(test_loaders[name].dataset)} samples")
+            except Exception as e:
+                logger.warning(f"Could not load {name}: {e}")
         else:
-            logger.warning(
-                f"Dataset '{name}' not yet preprocessed on HPC, skipping. "
-                f"Preprocess with: python scripts/preprocess_dataset.py --dataset {name}"
-            )
+            logger.warning(f"Unknown dataset: {name}")
 
     evaluate(
         config=config,
