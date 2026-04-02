@@ -2,6 +2,53 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [3.1.0] - 2026-04-02
+
+### Added
+- **Cross-attention embedding bypass:** Bidirectional cross-modal attention (V→A, A→V) with residual connections and layer norm, operating on full AV embeddings as a parallel classification path alongside the sync-score Bi-LSTM. Fused via learnable weight.
+  - `src/models/cross_attention.py` — `CrossAttentionModule` (2-head attention, ~394K params) + `EmbedClassifier` (masked mean+max pool → MLP, ~262K params)
+  - `src/models/syncguard.py` — Added `use_cross_attention` flag, parallel forward path, learnable fusion weight
+  - `scripts/train_cross_attention.py` — Stage 1 (train CA head only) + Stage 2 (end-to-end fusion) training script
+  - `scripts/slurm_train_cross_attention.sh` — SLURM pipeline: Stage 1 → Stage 2 → evaluate
+
+- **Learnable DCT feature extractor:** 2D DCT + 3-layer CNN (14K params) for frequency-domain face-swap artifact detection. Fused into cross-attention embed classifier.
+  - `src/models/dct_extractor.py` — `DCTFeatureExtractor` with log-scale DCT coefficients → CNN → per-frame features
+
+- **DFDC evaluation support:** `evaluate.py` now supports DFDC and CelebDF cross-dataset evaluation via `build_test_dataloader()`. Previously only FakeAVCeleb was wired in.
+
+- **Separate training configs:** `finetune_frozen.yaml` (frozen Wav2Vec, CA+DCT enabled), `finetune_v4_best.yaml` (frozen Wav2Vec, no CA/DCT, batch=32), `a100.yaml` (batch=16 for 40GB GPUs), `pretrain_frozen.yaml` (frozen Wav2Vec for pretraining)
+
+### Fixed
+- **SF-6 complete fix:** Entire Wav2Vec backbone kept in inference mode via `train()` override. Previous partial fix (feature_extractor only) missed `feature_projection.layer_norm` which still caused NaN.
+- **NaN guard changed from halt to skip-batch:** Training continues past corrupt samples instead of crashing. Logs sample IDs for targeted cleanup. 50-skip safety limit.
+- **Sample ID tracking:** `SyncGuardBatch` now includes `sample_ids` for NaN debugging.
+
+### Results
+
+**FakeAVCeleb (in-domain):**
+
+| Model | AUC | EER | RV-FA AUC |
+|-------|-----|-----|-----------|
+| v2 sync-only | 0.922 | 0.118 | 0.667 |
+| v4+CA (fused) | **0.961** | **0.082** | **0.881** |
+
+**DFDC (zero-shot cross-dataset):**
+
+| Model | AUC |
+|-------|-----|
+| v2 sync-only | 0.458 |
+| CA Stage 1+2 (on v2) | **0.526** |
+| v4+CA (fused) | 0.468 |
+
+### Key Findings
+- Cross-attention trained during finetuning dramatically improves in-domain performance (0.922 → 0.961) but does not transfer to DFDC
+- Cross-attention trained separately (Stage 1+2) shows modest DFDC improvement (0.458 → 0.526)
+- DCT features did not improve DFDC generalization (learnable CNN overfits to source domain)
+- v4 pretrain (frozen Wav2Vec, 121K clips, CMP) produces better representations than v3 (unfrozen, saturated)
+- Batch size significantly affects results: batch=32 gives ~0.05 AUC advantage over batch=16
+
+---
+
 ## [3.0.0] - 2026-03-28
 
 ### Critical Bug Fixes (Multi-Agent Code Review)

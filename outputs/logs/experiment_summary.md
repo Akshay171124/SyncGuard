@@ -1,6 +1,6 @@
 # SyncGuard — Experiment Summary
 
-**Last updated:** 2026-03-28
+**Last updated:** 2026-04-02
 **Team:** Akshay, Ritik, Atharva
 
 This document consolidates all experiment runs, results, and key findings across the entire project. For detailed per-experiment analysis, see the individual experiment reports linked in each section.
@@ -24,10 +24,16 @@ This document consolidates all experiment runs, results, and key findings across
 | 11 | EAR extraction | Mar 23 | Preprocessing | 21,059 samples | Complete |
 | 12 | LRS2 preprocessing | Mar 23 | Preprocessing | 18,453/96,318 | In progress |
 | 13 | **v3.0.0 Multi-Agent Review** | Mar 28 | Review | 50 findings, 6 critical | **Complete** |
-| 14 | DFDC reprocessing (HP-1/2/3/4 fixes) | Mar 28 | Preprocessing | — | In progress (job 5504787) |
-| 15 | Pretrain v3 (CMP + LRS2 + all fixes) | Mar 28 | Pretrain | — | In progress (job 5504788) |
-| 16 | Finetune v2 (EAR + all fixes) | Pending | Finetune | — | Blocked on #15 |
-| 17 | DFDC re-evaluation (reprocessed) | Pending | Eval | Target ≥ 0.72 | Blocked on #14, #16 |
+| 14 | DFDC reprocessing (HP-1/2/3/4 fixes) | Mar 28 | Preprocessing | 1,343/1,343 | Complete |
+| 15 | Pretrain v3 (unfrozen Wav2Vec, CMP) | Mar 28-29 | Pretrain | sync=1.0, InfoNCE=8.32 | Complete (saturated) |
+| 16 | Pretrain v4 (frozen Wav2Vec, CMP) | Mar 29-30 | Pretrain | sync=0.978, InfoNCE=8.06 | Complete (overfit after ep 2) |
+| 17 | Finetune v2 (v3 pretrain, frozen FT) | Mar 29 | Finetune | AUC=0.910, DFDC=0.458 | Complete |
+| 18 | Finetune v4 fresh (batch=16) | Mar 30-31 | Finetune | AUC=0.886 | Complete (limited by batch) |
+| 19 | CA Stage 1+2 (on v2 finetune, no DCT) | Mar 30 | CA Training | FAV=0.927, **DFDC=0.526** | Complete — best DFDC |
+| 20 | CA+DCT Stage 1+2 (on v2 finetune) | Mar 30 | CA Training | FAV=0.923, DFDC=0.512 | Complete — DCT didn't help |
+| 21 | v4+CA finetune (batch=16, CA during FT) | Apr 1-2 | Finetune | **FAV=0.961**, DFDC=0.468 | **Best FakeAVCeleb** |
+| 22 | v4 finetune (batch=32, no CA, H200) | Mar 31 | Finetune | AUC=0.913 | Complete (SLURM killed) |
+| 23 | DFDC evaluation (v4+CA 0.945 ckpt) | Apr 2 | Eval | FAV=0.961, DFDC=0.468 | Complete |
 
 ---
 

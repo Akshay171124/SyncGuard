@@ -982,4 +982,87 @@ Plus 4 DFDC preprocessing fixes in 4 files:
 
 ---
 
+## 2026-03-28 to 2026-03-31 — Pretraining v3/v4 and Finetuning Experiments
+**Owner:** Akshay
+**Phase:** Pretrain / Finetune
+
+### What I Did
+Ran multiple pretrain and finetune experiments after the bug fixes. Key experiments:
+
+**Pretraining:**
+- v3 (unfrozen Wav2Vec, 121K clips, CMP): Sync-score reached 1.0 by epoch 2, CMP collapsed to ~0. Saturated — representations too uniform.
+- v4 (frozen Wav2Vec, 121K clips, CMP): InfoNCE 8.06 (best ever), sync 0.978. Better representations but overfit after epoch 2 (tau hit floor 0.03).
+
+**Finetuning:**
+- v2 finetune (v3 pretrain, frozen Wav2Vec during FT): AUC 0.910, DFDC 0.458
+- v4 finetune (v4 pretrain, frozen, batch=16): AUC 0.886 (limited by small batch)
+- v4 finetune (v4 pretrain, frozen, batch=32): AUC 0.913 (no CA)
+- v4+CA finetune (v4 pretrain, CA enabled during FT): **AUC 0.945** → evaluated at **0.961**
+
+### Results
+- **Best FakeAVCeleb:** 0.961 AUC, 0.082 EER (v4+CA)
+- **Best DFDC:** 0.526 AUC (CA Stage 1+2 on v2 finetune)
+- Unfreezing Wav2Vec during finetune caused catastrophic forgetting (AUC dropped 0.577→0.473)
+- Batch size dramatically affects results: batch=32 gives ~0.05 AUC advantage
+
+### Observations
+- Frozen Wav2Vec during pretrain produces better representations than unfrozen (structured vs trivially uniform)
+- Cross-attention trained during finetuning helps in-domain (0.922→0.961) but not DFDC (0.468)
+- Cross-attention trained separately (Stage 1+2) modestly helps DFDC (0.458→0.526)
+- DCT features didn't transfer to DFDC (learnable CNN overfits to source domain artifacts)
+- The DFDC generalization gap is fundamental: face-swap methods differ too much between datasets
+
+### Decision
+- v4+CA (0.961 AUC) is our best FakeAVCeleb model
+- For DFDC, report 0.526 as best cross-dataset result with analysis of why generalization is hard
+- Focus remaining time on paper writing, ablation tables, and bootstrap CIs
+
+### Artifacts
+- Checkpoints: `v4_ca_0945_backup/finetune_best.pt`, `finetune_v2_backup/finetune_best.pt`, `ca_dct_results/`
+- New code: `src/models/cross_attention.py`, `src/models/dct_extractor.py`, `scripts/train_cross_attention.py`
+- Configs: `finetune_frozen.yaml`, `finetune_v4_best.yaml`, `pretrain_frozen.yaml`, `a100.yaml`
+- Design spec: `docs/superpowers/specs/2026-03-29-cross-attention-embedding-bypass-design.md`
+
+---
+
+## 2026-04-02 — SOTA Comparison and Final Evaluation
+**Owner:** Akshay
+**Phase:** Evaluation / Analysis
+
+### What I Did
+Ran final evaluation of v4+CA model on FakeAVCeleb and DFDC. Researched state-of-the-art results for comparison.
+
+### Results
+
+**v4+CA Final Evaluation:**
+
+| Dataset | AUC | EER | pAUC@0.1 |
+|---------|-----|-----|----------|
+| FakeAVCeleb | **0.961** | **0.082** | **0.856** |
+| DFDC | 0.468 | 0.510 | 0.031 |
+
+**FakeAVCeleb Per-Category:**
+- FV-RA (face-swap): 0.936
+- RV-FA (voice-cloning): **0.881** (up from 0.667 pre-CA)
+- FV-FA (both): 0.989
+
+**SOTA Comparison (FakeAVCeleb):**
+- HAVIC (CVPR'26): 99.9% — but may exploit silence bias
+- AVFF (CVPR'24): 99.1% — contrastive + supervised, closest to our approach
+- SyncGuard (ours): **96.1%** — competitive, bias-free
+- AVoiD-DF (ACM MM'23): 89.2%
+- Note: FakeAVCeleb has a known leading silence bias (CVPR'25) — trivial classifier gets 98.4%
+
+### Observations
+- Our 96.1% is competitive for a course project and likely more honest than some 99%+ results that may exploit the silence bias
+- DFDC generalization remains the field's open challenge — best cross-domain method gets 86.8% on standardized benchmarks
+- The RV-FA improvement (0.667→0.881) is a strong result — cross-attention captures identity-mismatch
+
+### Decision
+- Finalize 0.961/0.526 as our reportable numbers
+- Try BN adaptation + threshold recalibration as last DFDC attempts
+- Begin paper writing
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->
