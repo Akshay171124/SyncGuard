@@ -25,25 +25,19 @@ SyncGuard detects deepfake videos by measuring the temporal coherence between sp
 - **Phase 1 — Contrastive Pretraining:** InfoNCE + Cross-Modal Prediction (AVFF-style) on AVSpeech + LRS2 (~117K real clips)
 - **Phase 2 — Fine-tuning:** Combined loss (InfoNCE + temporal consistency + BCE) on FakeAVCeleb with EAR features and hard negative mining
 
-### Results (v2.x — pre-review baseline)
+### Current Results (v3.1.0)
 
-> **Note (Mar 28):** A multi-agent code review (v3.0.0) found critical bugs in the training pipeline
-> that invalidate prior results. Phase 1 pretrain had MoCo queue corruption on every SLURM resume.
-> DFDC preprocessing had 20% temporal drift. Full retraining is in progress. Results below are from
-> the pre-fix baseline and will be updated once v3 training completes.
+| Dataset | Model | AUC | EER | pAUC@0.1 |
+|---------|-------|-----|-----|----------|
+| FakeAVCeleb (in-domain) | v4+CA fused | **0.9613** | **0.0819** | **0.8555** |
+| DFDC (zero-shot) | CA Stage 1+2 | 0.5263 | 0.4911 | 0.0644 |
 
-| Dataset | Strategy | AUC | EER | Status |
-|---------|----------|-----|-----|--------|
-| FakeAVCeleb (in-domain) | Max-fusion cascade | **0.9458** | **0.1445** | Likely reproducible |
-| FakeAVCeleb (sync-only) | Sync-score + BiLSTM | 0.9254 | 0.1481 | Likely reproducible |
-| DFDC (zero-shot) | Best cascade | 0.5712 | 0.4535 | **Invalidated** (preprocessing bugs) |
+Per-category AUC on FakeAVCeleb (v4+CA):
+- FV-RA (face-swap, real audio): 0.9360
+- RV-FA (real video, fake audio): **0.8811**
+- FV-FA (both swapped): **0.9885**
 
-Per-category AUC on FakeAVCeleb (max-fusion):
-- FV-RA (face-swap, real audio): 0.8981
-- RV-FA (real video, fake audio): **0.9278**
-- FV-FA (both swapped): **0.9902**
-
-> Cross-modal prediction pretraining + EAR features are being deployed to improve DFDC generalization (target AUC ≥ 0.72).
+DFDC cross-dataset generalization remains challenging due to fundamental differences between FakeAVCeleb and DFDC face-swap methods. See `docs/superpowers/specs/review-findings.md` for detailed analysis.
 
 ## Architecture
 
