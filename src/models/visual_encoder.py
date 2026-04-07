@@ -6,6 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import resnet18
 
+from src.models.clip_visual_encoder import build_clip_visual_encoder
+
 logger = logging.getLogger(__name__)
 
 
@@ -343,6 +345,8 @@ def build_visual_encoder(config: dict) -> nn.Module:
             embedding_dim=embedding_dim,
             freeze_pretrained=freeze,
         )
+    elif name == "clip":
+        return build_clip_visual_encoder(config)
     else:
         raise ValueError(f"Unknown visual encoder: {name}")
 
