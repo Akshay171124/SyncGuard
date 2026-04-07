@@ -129,14 +129,16 @@ class SelfBlendedImage:
 
         # Optional JPEG compression
         if random.random() < 0.5:
+            # _jpeg_compress expects (H, W) or (H, W, C)
+            blend_2d = blended[:, :, 0] if is_gray else blended
+            blend_2d = self._jpeg_compress(blend_2d)
             if is_gray:
-                blended = blended.squeeze(-1)
-            blended = self._jpeg_compress(blended)
-            if is_gray and blended.ndim == 2:
-                blended = blended[:, :, np.newaxis]
+                blended = blend_2d[:, :, np.newaxis] if blend_2d.ndim == 2 else blend_2d[:, :, :1]
+            else:
+                blended = blend_2d
 
         if is_gray:
-            blended = blended.squeeze(-1)
+            blended = blended[:, :, 0] if blended.ndim == 3 else blended
 
         return np.clip(blended, 0, 1).astype(np.float32)
 
