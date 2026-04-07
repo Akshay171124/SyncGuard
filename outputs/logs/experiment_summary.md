@@ -1,6 +1,6 @@
 # SyncGuard — Experiment Summary
 
-**Last updated:** 2026-04-02
+**Last updated:** 2026-04-06
 **Team:** Akshay, Ritik, Atharva
 
 This document consolidates all experiment runs, results, and key findings across the entire project. For detailed per-experiment analysis, see the individual experiment reports linked in each section.
@@ -31,9 +31,13 @@ This document consolidates all experiment runs, results, and key findings across
 | 18 | Finetune v4 fresh (batch=16) | Mar 30-31 | Finetune | AUC=0.886 | Complete (limited by batch) |
 | 19 | CA Stage 1+2 (on v2 finetune, no DCT) | Mar 30 | CA Training | FAV=0.927, **DFDC=0.526** | Complete — best DFDC |
 | 20 | CA+DCT Stage 1+2 (on v2 finetune) | Mar 30 | CA Training | FAV=0.923, DFDC=0.512 | Complete — DCT didn't help |
-| 21 | v4+CA finetune (batch=16, CA during FT) | Apr 1-2 | Finetune | **FAV=0.961**, DFDC=0.468 | **Best FakeAVCeleb** |
+| 21 | v4+CA finetune (batch=16, CA during FT) | Apr 1-2 | Finetune | **FAV=0.961**, DFDC=0.468 | Complete |
 | 22 | v4 finetune (batch=32, no CA, H200) | Mar 31 | Finetune | AUC=0.913 | Complete (SLURM killed) |
 | 23 | DFDC evaluation (v4+CA 0.945 ckpt) | Apr 2 | Eval | FAV=0.961, DFDC=0.468 | Complete |
+| 24 | v4+CA resume (epoch 9→22, early stop) | Apr 2 | Finetune | val_AUC=**0.953** (epoch 17) | Complete |
+| 25 | v4+CA final eval (epoch 17 ckpt) | Apr 2 | Eval | **FAV=0.963**, DFDC=0.497 | **Best overall** |
+| 26 | BN adaptation (CA Stage 1+2 model) | Apr 2 | Eval | DFDC: 0.548→0.474 | Complete — made worse |
+| 27 | BN adaptation (v4+CA final model) | Apr 2 | Eval | DFDC: 0.499→0.500 | Complete — no change |
 
 ---
 

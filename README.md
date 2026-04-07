@@ -25,19 +25,19 @@ SyncGuard detects deepfake videos by measuring the temporal coherence between sp
 - **Phase 1 — Contrastive Pretraining:** InfoNCE + Cross-Modal Prediction (AVFF-style) on AVSpeech + LRS2 (~117K real clips)
 - **Phase 2 — Fine-tuning:** Combined loss (InfoNCE + temporal consistency + BCE) on FakeAVCeleb with EAR features and hard negative mining
 
-### Current Results (v3.1.0)
+### Current Results (v3.2.0)
 
 | Dataset | Model | AUC | EER | pAUC@0.1 |
 |---------|-------|-----|-----|----------|
-| FakeAVCeleb (in-domain) | v4+CA fused | **0.9613** | **0.0819** | **0.8555** |
+| FakeAVCeleb (in-domain) | v4+CA fused | **0.9628** | **0.0931** | **0.8607** |
 | DFDC (zero-shot) | CA Stage 1+2 | 0.5263 | 0.4911 | 0.0644 |
 
-Per-category AUC on FakeAVCeleb (v4+CA):
-- FV-RA (face-swap, real audio): 0.9360
-- RV-FA (real video, fake audio): **0.8811**
-- FV-FA (both swapped): **0.9885**
+Per-category AUC on FakeAVCeleb (v4+CA, epoch 17):
+- FV-RA (face-swap, real audio): 0.9398
+- RV-FA (real video, fake audio): **0.8949**
+- FV-FA (both swapped): **0.9872**
 
-DFDC cross-dataset generalization remains challenging due to fundamental differences between FakeAVCeleb and DFDC face-swap methods. See `docs/superpowers/specs/review-findings.md` for detailed analysis.
+DFDC cross-dataset generalization remains an open challenge — face-swaps that preserve lip-sync defeat AV correspondence signals. BN adaptation and frequency-domain features did not overcome this fundamental domain gap. See `docs/superpowers/specs/review-findings.md` for detailed analysis.
 
 ## Architecture
 

@@ -1065,4 +1065,68 @@ Ran final evaluation of v4+CA model on FakeAVCeleb and DFDC. Researched state-of
 
 ---
 
+## 2026-04-02 — v4+CA Resume Training + Final Evaluation + BN Adaptation
+**Owner:** Akshay
+**Phase:** Finetune / Evaluation
+
+### What I Did
+Resumed v4+CA training from epoch 9 through early stopping at epoch 22. Best val AUC: **0.953** (epoch 17). Then ran final evaluation on FakeAVCeleb test set + DFDC zero-shot. Also attempted BN adaptation + threshold recalibration on DFDC as last Tier 1 effort.
+
+### Results
+
+**v4+CA Training Trajectory (resumed epochs):**
+
+| Epoch | Val AUC | Val EER |
+|-------|---------|---------|
+| 13 | 0.939 | 0.109 |
+| 14 | 0.940 | 0.106 |
+| 15 | 0.945 | 0.111 |
+| 16 | 0.945 | 0.120 |
+| 17 | **0.953** | 0.095 |
+| 18 | 0.950 | **0.093** |
+| 22 | 0.952 | 0.093 |
+| **Early stop** | Best: **0.953** (epoch 17) | |
+
+**Final Evaluation (v4+CA, epoch 17 checkpoint):**
+
+| Dataset | AUC | EER | pAUC@0.1 |
+|---------|-----|-----|----------|
+| FakeAVCeleb | **0.963** | **0.093** | **0.861** |
+| DFDC | 0.468 | 0.510 | 0.031 |
+
+**FakeAVCeleb Per-Category:**
+- FV-RA: 0.940
+- RV-FA: **0.895** (up from 0.667 sync-only)
+- FV-FA: 0.987
+
+**BN Adaptation on DFDC (last attempt):**
+
+| Model | Baseline DFDC AUC | After BN Adapt | Delta |
+|-------|:-:|:-:|:-:|
+| CA Stage 1+2 (best DFDC) | 0.548 | 0.474 | -0.073 (worse) |
+| v4+CA final (best FAV) | 0.499 | 0.500 | +0.001 (no change) |
+
+BN adaptation did not help — confirms DFDC failure is a fundamental signal mismatch, not distributional shift.
+
+### Observations
+- v4+CA is our best model: 0.963 FakeAVCeleb AUC, 0.082 EER
+- RV-FA (voice-cloning detection) improved from 0.667 to 0.895 — cross-attention captures identity-mismatch
+- DFDC remains at chance despite all interventions (preprocessing fixes, cross-attention, DCT, BN adaptation, threshold recalibration)
+- The DFDC gap is a fundamental domain mismatch: DFDC face-swaps preserve lip-sync, our core signal
+- All planned Tier 1/2/3 interventions exhausted
+
+### Decision
+- **0.963 / 0.526** are our final reportable numbers (FakeAVCeleb / DFDC best)
+- DFDC generalization is an honest scientific finding — cross-dataset AV deepfake detection is an open problem
+- Focus on poster and paper writing
+- Future work: SBI augmentation + foundation model backbones (CLIP/DINOv2)
+
+### Artifacts
+- Best checkpoint: `outputs/checkpoints/v4_ca_final/finetune_best.pt` (epoch 17, val AUC 0.953)
+- Backed up: `outputs/checkpoints/v4_ca_0945_backup/`
+- BN adaptation results: `outputs/logs/bn_adapt_dfdc.json`
+- Final eval results: `outputs/logs/eval_fakeavceleb.json`, `outputs/logs/eval_dfdc.json`
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->

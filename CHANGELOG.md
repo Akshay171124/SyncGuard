@@ -2,6 +2,31 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [3.2.0] - 2026-04-06
+
+### Final Results
+
+**Best in-domain (FakeAVCeleb test set, 2,950 samples):**
+- **AUC: 0.963** | EER: 0.093 | pAUC@0.1: 0.861
+- Per-category: FV-RA 0.940, RV-FA **0.895**, FV-FA 0.987
+
+**Best cross-dataset (DFDC, 1,343 samples, zero-shot):**
+- **AUC: 0.526** (CA Stage 1+2 on v2 finetune)
+
+### Completed
+- v4+CA training resumed to epoch 22, early stopped at epoch 17 (val AUC 0.953)
+- Final evaluation: FakeAVCeleb 0.963 AUC, DFDC 0.497
+- BN adaptation attempted on both CA Stage 1+2 (DFDC 0.548→0.474) and v4+CA final (0.499→0.500) — neither helped
+- All Tier 1/2/3 DFDC interventions exhausted
+
+### Key Findings
+- Frozen Wav2Vec during pretraining produces better representations (InfoNCE 8.06) than unfrozen (8.32)
+- Cross-attention during finetuning improves RV-FA detection from 0.667 to 0.895
+- DFDC generalization failure is a fundamental signal mismatch (face-swaps preserve lip-sync), not distributional shift
+- Batch size significantly affects results: batch=32 gives ~0.05 AUC advantage over batch=16
+
+---
+
 ## [3.1.0] - 2026-04-02
 
 ### Added

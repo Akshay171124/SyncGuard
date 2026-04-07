@@ -6,7 +6,7 @@
 
 ---
 
-## Current State (Updated Apr 2, 2026)
+## Current State (Updated Apr 6, 2026)
 
 ### ⚠ Prior Results Invalidated (v3.0.0 Review)
 On Mar 28, a 7-agent code review found 50 issues including 6 critical blockers. Key impact:
@@ -62,13 +62,24 @@ On Mar 28, a 7-agent code review found 50 issues including 6 critical blockers. 
 | FakeAVCeleb | v4+CA fused | **0.961** | **0.082** |
 | DFDC | CA Stage 1+2 on v2 | **0.526** | 0.491 |
 
+### Completed (Apr 2-6)
+- **v4+CA resume training:** Epoch 9→22, early stopped at epoch 17 (val AUC 0.953)
+- **Final evaluation:** FakeAVCeleb 0.963 AUC, 0.093 EER, RV-FA 0.895
+- **BN adaptation:** Attempted on both CA Stage 1+2 and v4+CA models — no improvement on DFDC
+- **All Tier 1/2/3 DFDC interventions exhausted**
+
+### Final Best Results
+| Dataset | Model | AUC | EER |
+|---------|-------|-----|-----|
+| FakeAVCeleb | v4+CA (epoch 17) | **0.963** | **0.093** |
+| DFDC | CA Stage 1+2 on v2 | **0.526** | 0.491 |
+
 ### Still Pending
-- BN adaptation on DFDC (Tier 1, never tried)
-- Threshold recalibration (Tier 1, never tried)
 - 3x seed variance runs (paper requirement)
 - Bootstrap CIs (paper requirement)
 - Ablation table compilation
-- Paper writing (Days 7-14 remaining)
+- Poster completion
+- Paper writing
 
 ### Completed (HPC Deployment — Mar 23)
 - **EAR extraction:** FakeAVCeleb (19,725) + DFDC (1,334) — all ear_features.npy saved ✓
