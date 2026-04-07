@@ -22,6 +22,7 @@ from src.preprocessing.dataset_loader import (
     VideoSample, FakeAVCelebLoader, AVSpeechLoader, CelebDFLoader, DFDCLoader,
     LRS2Loader, get_dataset_loader,
 )
+from src.augmentation.sbi import SelfBlendedImage, build_sbi
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class SyncGuardDataset(Dataset):
         hard_negative_ratio: float = 0.0,
         audio_swap_ratio: float = 0.0,
         transform=None,
+        config: dict = None,
     ):
         self.features_dir = Path(features_dir)
         self.max_frames = max_frames
@@ -87,6 +89,22 @@ class SyncGuardDataset(Dataset):
         self.hard_negative_ratio = hard_negative_ratio
         self.audio_swap_ratio = audio_swap_ratio
         self.transform = transform
+
+        # SBI augmentation for cross-dataset generalization
+        if config is not None:
+            sbi_cfg = config.get("augmentation", {}).get("sbi", {})
+            self.sbi_enabled = sbi_cfg.get("enabled", False)
+            self.sbi_ratio = sbi_cfg.get("ratio", 0.3)
+            self.sbi = build_sbi(config) if self.sbi_enabled else None
+            ve_cfg = config.get("model", {}).get("visual_encoder", {})
+            self.visual_input_size = ve_cfg.get("input_size", 96)
+            self.visual_channels = 3 if ve_cfg.get("name") == "clip" else 1
+        else:
+            self.sbi_enabled = False
+            self.sbi_ratio = 0.0
+            self.sbi = None
+            self.visual_input_size = 96
+            self.visual_channels = 1
 
         # Filter out samples without preprocessed features
         valid_samples = []
@@ -330,8 +348,28 @@ class SyncGuardDataset(Dataset):
             label = 1  # Still fake (mismatched audio-visual)
             category = "RV-FA-aug"
 
+        # SBI augmentation: for REAL samples, create synthetic face-swap
+        if (
+            self.sbi_enabled
+            and self.sbi is not None
+            and label == 0
+            and random.random() < self.sbi_ratio
+        ):
+            mouth_crops = self.sbi.augment_sequence(mouth_crops)
+            label = 1
+            category = "SBI-aug"
+
         if self.transform is not None:
             mouth_crops = self.transform(mouth_crops)
+
+        # Resize and convert channels for CLIP backbone
+        if self.visual_input_size != mouth_crops.shape[-1]:
+            mouth_crops = F.interpolate(
+                mouth_crops, size=(self.visual_input_size, self.visual_input_size),
+                mode="bilinear", align_corners=False,
+            )
+        if self.visual_channels == 3 and mouth_crops.shape[1] == 1:
+            mouth_crops = mouth_crops.repeat(1, 3, 1, 1)
 
         # Load EAR features if available
         ear = self._load_ear_features(feature_dir, mouth_crops.shape[0])
@@ -504,14 +542,17 @@ def build_dataloaders(
         features_dir=features_dir,
         hard_negative_ratio=hard_neg_ratio,
         audio_swap_ratio=audio_swap_ratio,
+        config=config,
     )
     val_ds = SyncGuardDataset(
         samples=val_samples,
         features_dir=features_dir,
+        config=config,
     )
     test_ds = SyncGuardDataset(
         samples=test_samples,
         features_dir=features_dir,
+        config=config,
     )
 
     num_workers = hw_cfg.get("num_workers", 4)
