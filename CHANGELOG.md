@@ -2,6 +2,24 @@
 
 All notable changes to SyncGuard will be documented in this file.
 
+## [3.3.0] - 2026-04-11
+
+### Added
+- **Comprehensive test suite** — 219 pytest tests across 11 files covering models, losses, metrics, dataset collation, SyncGuard integration, checkpoint round-trip, speaker-disjoint splits, mocked audio encoder, SBI augmentation, DCT extractor, EAR computation, and config loading. Runs in ~12 seconds on CPU with no external dependencies.
+- **CLIP ViT-L/14 visual encoder** — `src/models/clip_visual_encoder.py` for DFDC cross-dataset generalization. Frozen backbone with LayerNorm-only tuning, 224x224 RGB input, 768→256 projection.
+- **Self-Blended Image (SBI) augmentation** — `src/augmentation/sbi.py` generates synthetic face-swap training data with blending boundary artifacts (color jitter, Gaussian blur, affine warp, JPEG compression).
+- **CLIP+SBI config** — `configs/clip_sbi.yaml` with SBI parameters and hardware section.
+
+### Fixed
+- **RGB collation bug** — `collate_syncguard()` hardcoded `C=1` when allocating padded batch tensors, crashing on 3-channel CLIP inputs. Fixed to infer channel count from batch.
+
+### Documentation
+- **README.md** — Added Dependencies table, Testing section (219 tests), Google Drive dataset link, Known Issues & Special Considerations section. Meets all Phase 3-2 rubric requirements.
+- **Lab notebook** — Added entries for Apr 6 (CLIP+SBI design), Apr 7 (training failure), Apr 11 (test suite).
+- **CHANGELOG** — This entry.
+
+---
+
 ## [3.2.0] - 2026-04-06
 
 ### Final Results

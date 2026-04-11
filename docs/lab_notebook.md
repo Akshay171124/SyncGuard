@@ -1129,4 +1129,115 @@ BN adaptation did not help — confirms DFDC failure is a fundamental signal mis
 
 ---
 
+## 2026-04-06 — CLIP+SBI Design & Implementation for DFDC Generalization
+**Owner:** Akshay
+**Phase:** Implementation
+
+### What I Did
+Designed and implemented a new approach for DFDC cross-dataset generalization using CLIP ViT-L/14 as the visual backbone and Self-Blended Image (SBI) augmentation:
+
+**CLIP Visual Encoder:**
+- `src/models/clip_visual_encoder.py` — wraps OpenAI CLIP ViT-L/14 (frozen, LayerNorm-only tuning) as an alternative to AV-HuBERT
+- 224x224 RGB input (vs 96x96 grayscale for AV-HuBERT), 768→256 projection head
+- Rationale: CLIP's web-scale pretraining captures identity-related visual features that AV-HuBERT (lip-reading focused) misses
+
+**Self-Blended Image (SBI) Augmentation:**
+- `src/augmentation/sbi.py` — generates synthetic face-swap training data from real videos
+- Applies per-frame: color jitter → Gaussian blur → affine warp → elliptical mask blend → optional JPEG compression
+- Creates blending boundary artifacts common to ALL face-swap methods
+- Based on Shiohara & Yamasaki (CVPR 2022): SBI augmentation forces the model to detect blending artifacts rather than memorizing source-specific patterns
+- 30% of real samples converted to SBI fakes during training
+
+**Config & Training:**
+- `configs/clip_sbi.yaml` — CLIP+SBI configuration with SBI parameters
+- `scripts/train_clip_sbi.py` — training script using finetune pipeline
+- `scripts/slurm_train_clip_sbi.sh` — SLURM job with checkpoint resume and auto-resubmit
+
+### Results
+- CPU dry run: CLIP encoder produces (B, T, 256) from 224x224 RGB input, SBI augmentation applies correctly
+- Design spec written and committed
+
+### Decision
+- Deploy to HPC and run CLIP+SBI finetuning on FakeAVCeleb
+- Goal: improve DFDC zero-shot AUC from 0.526 toward 0.72 target
+
+### Artifacts
+- Design spec: `docs/superpowers/specs/2026-04-06-clip-sbi-dfdc-generalization-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-04-06-clip-sbi-implementation.md`
+- New files: `src/models/clip_visual_encoder.py`, `src/augmentation/sbi.py`, `configs/clip_sbi.yaml`
+
+---
+
+## 2026-04-07 — CLIP+SBI Training Attempt (Failed — Collation Bug)
+**Owner:** Akshay
+**Phase:** Training / Debug
+
+### What I Did
+Submitted CLIP+SBI training to HPC. Job crashed immediately during DataLoader iteration. Auto-resubmit created ~40 job attempts, all failing with the same error.
+
+### Results
+- **0 epochs completed**, no checkpoints produced
+- Error: `RuntimeError: The expanded size of the tensor (1) must match the existing size (3) at non-singleton dimension 1. Target sizes: [144, 1, 224, 224]. Tensor sizes: [144, 3, 224, 224]`
+- Root cause: `collate_syncguard()` in `src/training/dataset.py` hardcoded `C=1` when allocating the padded batch tensor. CLIP produces 3-channel (RGB) 224x224 crops, causing a shape mismatch during collation.
+
+### Observations
+- The bug was in a single line: `mouth_crops = torch.zeros(B, max_frames, 1, H, W)` — should infer `C` from the batch
+- Auto-resubmit without error checking caused 40 wasted job submissions
+- Training infrastructure assumed grayscale-only input — CLIP integration was the first RGB path
+
+### Decision
+- Fix collation to infer channel count from batch: `C = batch[0]["mouth_crops"].shape[1]`
+- Redeploy to HPC and resubmit
+
+### Artifacts
+- Error logs: `outputs/logs/clip_sbi_5766403.err` through `clip_sbi_5769150.err`
+
+---
+
+## 2026-04-11 — Comprehensive Test Suite & README Update
+**Owner:** Akshay
+**Phase:** Testing / Documentation
+
+### What I Did
+Built a comprehensive pytest test suite covering all major components, and updated README to meet Phase 3-2 submission requirements.
+
+**Test Suite (219 tests across 11 files):**
+- `test_metrics.py` (18) — AUC-ROC, EER, pAUC, per-category, bootstrap CI with known-answer tests
+- `test_losses.py` (27) — MoCo queue FIFO/wrapping, InfoNCE, temperature clamping, temporal consistency real-only gating, CMP, CombinedLoss decomposition
+- `test_models.py` (45) — All 3 visual encoders, 3 classifiers, cross-attention, DCT extractor, factory functions; shape, L2-norm, gradient, freeze tests
+- `test_syncguard.py` (20) — Full model integration: align_sequences (including off-by-one), compute_sync_scores, forward pass, audio head, encode-only paths
+- `test_dataset.py` (16) — Collation padding/masking, variable-length sequences, RGB channels, edge cases
+- `test_dataset_loader.py` (17) — FakeAVCeleb scanning, speaker-disjoint split enforcement (pitfall #7), CelebDF, DFDC loaders
+- `test_checkpoint.py` (7) — Save/load round-trip for model, optimizer, scheduler, criterion, MoCo queue state (pitfall #10)
+- `test_audio_encoder.py` (7) — Mocked Wav2Vec2, layer extraction verification (pitfall #8), frozen backbone, SF-6 train mode override
+- `test_augmentation.py` (18) — SBI blend_frame output shape/range, grayscale/RGB, mask generation, augment_sequence
+- `test_preprocessing.py` (16) — Audio helpers, upsampling, EAR computation formula
+- `test_config.py` (8) — YAML loading, default.yaml validation, device auto-detection
+
+**README Update:**
+- Added Dependencies table (all key packages with versions)
+- Added Testing section (run command, test count table, coverage summary)
+- Added Google Drive dataset link
+- Added Known Issues & Special Considerations section (DFDC gap, frozen Wav2Vec, RetinaFace failures, GPU memory, temporal alignment)
+
+**Collation Bug Fix:**
+- Fixed `collate_syncguard()` to infer channel count from batch instead of hardcoding C=1
+- This was the root cause of the CLIP+SBI training failure on Apr 7
+
+### Results
+- **215 passed, 4 skipped** (EAR tests skip without mediapipe — will pass on HPC)
+- All tests run in ~12 seconds on CPU, no GPU or dataset downloads required
+- Covers 9 of 10 CLAUDE.md pitfalls (#1 fairseq conflicts is untestable)
+
+### Decision
+- Deploy collation fix to HPC and resubmit CLIP+SBI training
+- Update CHANGELOG with v3.3.0
+
+### Artifacts
+- Tests: `tests/conftest.py`, `tests/test_*.py` (11 files)
+- README.md updated
+- Commits: `df1850b` (tests + README), `1d19971` (collation fix + clip_sbi config)
+
+---
+
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->
