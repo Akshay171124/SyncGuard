@@ -406,8 +406,9 @@ def collate_syncguard(batch: list[dict]) -> SyncGuardBatch:
     B = len(batch)
     H, W = batch[0]["mouth_crops"].shape[-2:]
 
-    # Pre-allocate padded tensors
-    mouth_crops = torch.zeros(B, max_frames, 1, H, W)
+    # Pre-allocate padded tensors (C inferred from batch — 1 for grayscale, 3 for CLIP/RGB)
+    C = batch[0]["mouth_crops"].shape[1]
+    mouth_crops = torch.zeros(B, max_frames, C, H, W)
     waveforms = torch.zeros(B, max_audio_len)
     ear_features = torch.zeros(B, max_frames)
     mask = torch.zeros(B, max_frames, dtype=torch.bool)

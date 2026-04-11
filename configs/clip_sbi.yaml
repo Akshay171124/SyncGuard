@@ -98,3 +98,8 @@ training:
     audio_swap_ratio: 0.15
 
 seed: 42
+
+hardware:
+  device: auto
+  num_workers: 8
+  pin_memory: true
