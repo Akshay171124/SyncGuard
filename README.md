@@ -148,6 +148,25 @@ export HF_HOME=/scratch/$USER/.cache/huggingface
 cd /scratch/$USER/SyncGuard
 ```
 
+## Dependencies
+
+| Category | Packages |
+|----------|----------|
+| **Deep Learning** | PyTorch >= 2.0, torchaudio >= 2.0, torchvision >= 0.15 |
+| **Pretrained Models** | transformers >= 4.30 (Wav2Vec 2.0), fairseq >= 0.12 (AV-HuBERT) |
+| **Computer Vision** | opencv-python >= 4.8, mediapipe >= 0.10, retinaface >= 0.0.17 |
+| **Audio** | soundfile >= 0.12, librosa >= 0.10 |
+| **Evaluation & Viz** | scikit-learn >= 1.3, matplotlib >= 3.7, seaborn >= 0.12 |
+| **Experiment Tracking** | wandb >= 0.15 |
+| **Config** | pyyaml >= 6.0, numpy >= 1.24, scipy >= 1.10 |
+| **System** | ffmpeg (must be installed separately via `brew install ffmpeg` or `apt install ffmpeg`) |
+
+All Python dependencies are pinned in `requirements.txt`. Install with:
+
+```bash
+pip install -r requirements.txt
+```
+
 ## Usage
 
 ### Preprocessing
@@ -197,7 +216,35 @@ sbatch scripts/slurm_pretrain.sh
 sbatch scripts/slurm_finetune.sh
 ```
 
+## Testing
+
+Run the full test suite (219 tests, ~12 seconds on CPU):
+
+```bash
+python -m pytest tests/ -v
+```
+
+Tests cover all major components without requiring GPU or dataset downloads:
+
+| Test File | Tests | Coverage |
+|-----------|-------|----------|
+| `test_metrics.py` | 18 | AUC-ROC, EER, pAUC, per-category breakdown, bootstrap CI |
+| `test_losses.py` | 27 | MoCo queue, InfoNCE, temperature clamping, temporal consistency, combined loss |
+| `test_models.py` | 45 | Visual encoders, classifiers, cross-attention, DCT extractor, factory functions |
+| `test_syncguard.py` | 20 | Full model integration, sequence alignment, sync-score computation |
+| `test_dataset.py` | 16 | Batch collation, padding, masking, variable-length sequences |
+| `test_dataset_loader.py` | 17 | Dataset scanning, speaker-disjoint splits, category detection |
+| `test_checkpoint.py` | 7 | Save/load round-trip for model, optimizer, scheduler, criterion |
+| `test_audio_encoder.py` | 7 | Mocked Wav2Vec2, layer extraction, frozen backbone behavior |
+| `test_augmentation.py` | 18 | Self-Blended Image blending, mask generation, sequence augmentation |
+| `test_preprocessing.py` | 16 | Audio extraction helpers, upsampling, EAR computation |
+| `test_config.py` | 8 | YAML config loading, device auto-detection |
+
+Tests that require optional dependencies (e.g., mediapipe for EAR) are automatically skipped when the dependency is not installed.
+
 ## Datasets
+
+**Dataset Download:** All datasets (raw and preprocessed) are available on [Google Drive](https://drive.google.com/drive/folders/1wQ9cdWo5R9O8ZvwPO7XUnfMvVOgoIF1E?usp=drive_link).
 
 | Dataset | Samples | Role | Status |
 |---------|---------|------|--------|
@@ -206,6 +253,20 @@ sbatch scripts/slurm_finetune.sh
 | LRS2 | 96,318 | Expanded pretraining + extra reals | In progress |
 | DFDC Part 0 | 1,334 | Cross-dataset zero-shot test | Preprocessed |
 | CelebDF-v2 | 921 | Dropped (no audio streams) | N/A |
+
+After downloading, place datasets under `data/raw/` and preprocessed features under `data/processed/`. Update paths in `configs/default.yaml` if your directory structure differs.
+
+## Known Issues & Special Considerations
+
+- **DFDC cross-dataset generalization:** Zero-shot AUC on DFDC is 52.6% (target: 72%). Face-swap methods that preserve lip-sync defeat audio-visual correspondence signals. CLIP ViT-L/14 + Self-Blended Image augmentation is being explored to address this.
+- **Wav2Vec 2.0 must be frozen** during fine-tuning on small datasets (~21K samples). Unfreezing causes catastrophic forgetting of pretrained speech representations and degrades performance.
+- **RetinaFace silent failures:** Frames with no detected face (low confidence, non-frontal, occluded) are silently skipped during preprocessing. The confidence threshold is set to 0.8 in `configs/default.yaml`.
+- **GPU memory:** H200 (140GB) is recommended for training. A100 (40GB) works but may require reducing batch size from 32 to 16 for pretraining. AV-HuBERT + Wav2Vec 2.0 + Bi-LSTM accumulate large hidden states.
+- **Pre-download pretrained models** before submitting GPU jobs to avoid wasting compute time:
+  ```bash
+  python -c "from transformers import Wav2Vec2Model; Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base-960h')"
+  ```
+- **Temporal alignment:** Visual features (25 fps) are upsampled to match Wav2Vec output rate (~49 Hz). Off-by-one frame differences are handled by truncating to the shorter sequence in `SyncGuard.align_sequences()`.
 
 ## Key References
 
