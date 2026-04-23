@@ -55,6 +55,7 @@ def run_cascade_inference(
     all_raw_sync = []
     all_labels = []
     all_categories = []
+    all_sample_ids = []
 
     for batch in dataloader:
         batch: SyncGuardBatch
@@ -84,6 +85,8 @@ def run_cascade_inference(
         all_labels.append(labels.numpy())
         if hasattr(batch, "categories"):
             all_categories.extend(batch.categories)
+        if hasattr(batch, "sample_ids") and batch.sample_ids is not None:
+            all_sample_ids.extend(batch.sample_ids)
 
     return {
         "sync_scores": np.concatenate(all_sync_scores),
@@ -91,6 +94,7 @@ def run_cascade_inference(
         "raw_sync": np.concatenate(all_raw_sync),
         "labels": np.concatenate(all_labels),
         "categories": np.array(all_categories) if all_categories else None,
+        "sample_ids": np.array(all_sample_ids) if all_sample_ids else None,
     }
 
 
@@ -107,6 +111,7 @@ def evaluate_cascade(predictions: dict, output_dir: Path, dataset_name: str = "f
     audio_scores = predictions["audio_scores"]
     raw_sync = predictions.get("raw_sync")
     categories = predictions.get("categories")
+    sample_ids = predictions.get("sample_ids")
 
     # Raw sync-score: lower cosine sim = more likely fake
     # Negate so higher = more likely fake (matches AUC convention)
@@ -160,6 +165,8 @@ def evaluate_cascade(predictions: dict, output_dir: Path, dataset_name: str = "f
     }
     if categories is not None:
         save_dict["categories"] = categories
+    if sample_ids is not None:
+        save_dict["sample_ids"] = sample_ids
     np.savez(output_dir / f"predictions_cascade_{dataset_name}.npz", **save_dict)
 
 
