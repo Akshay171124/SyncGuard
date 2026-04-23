@@ -62,13 +62,14 @@ def render_sync_plot(sync_curve, threshold, dip_segments, fps, title=""):
 def _bar(label, prob, color):
     pct = int(round(prob * 100))
     return f"""
-    <div style="margin:4px 0;">
+    <div style="margin:6px 0;">
         <div style="display:flex; justify-content:space-between;
-                    font-size:13px; color:#333; margin-bottom:2px;">
+                    font-size:14px; color:#111; font-weight:500;
+                    margin-bottom:4px;">
             <span>{label}</span><span>{pct}% fake</span>
         </div>
-        <div style="background:#e0e0e0; border-radius:4px; height:10px;
-                    overflow:hidden;">
+        <div style="background:#d0d0d0; border-radius:4px; height:12px;
+                    overflow:hidden; border:1px solid #b0b0b0;">
             <div style="background:{color}; width:{pct}%; height:100%;"></div>
         </div>
     </div>
@@ -88,17 +89,21 @@ def verdict_banner_html(verdict, confidence, ground_truth,
         curve_stats = ""
         if mean_sync is not None:
             curve_stats = f"""
-            <div style="margin-top:8px; font-size:13px; color:#444;">
-                <strong>Sync curve:</strong>
-                mean = {mean_sync:.3f},
-                dips below {SYNC_THRESHOLD:.2f} = {num_dips}
+            <div style="margin-top:10px; padding-top:8px; border-top:1px solid #ccc;
+                        font-size:14px; color:#111;">
+                <strong style="color:#000;">Sync curve:</strong>
+                mean = <span style="font-weight:600;">{mean_sync:.3f}</span>,
+                dips below {SYNC_THRESHOLD:.2f} =
+                <span style="font-weight:600;">{num_dips}</span>
             </div>
             """
         signals_html = f"""
-        <div style="padding:10px 16px; border-radius:8px; background:#fafafa;
-                    margin-top:10px; font-family:system-ui;">
-            <div style="font-size:12px; color:#666; font-weight:600;
-                        text-transform:uppercase; margin-bottom:6px;">
+        <div style="padding:12px 16px; border-radius:8px; background:#e8ecef;
+                    border:1px solid #c0c8cf; margin-top:12px;
+                    font-family:system-ui; color:#111;">
+            <div style="font-size:13px; color:#2c3e50; font-weight:700;
+                        text-transform:uppercase; margin-bottom:8px;
+                        letter-spacing:0.5px;">
                 Per-head signals (cascade inputs)
             </div>
             {_bar("Sync head (v4+CA)", sync_prob, "#1A5276")}
@@ -193,33 +198,25 @@ def build_demo():
                 )
 
             if LIVE_ENABLED:
-                from src.demo.live_challenge import swap_audio, process_live_clip
+                from src.demo.live_challenge import process_live_clip
                 from src.preprocessing.face_detector import FaceDetector
 
                 print("Initializing MediaPipe face detector for live tab...")
                 live_face_detector = FaceDetector(crop_size=96,
                                                   confidence_threshold=0.5)
 
-                def on_live_analyze(recorded_path, mode):
-                    """mode: 'as-is' (no swap, expect real) or 'swap' (expect fake)."""
+                def on_live_analyze(recorded_path):
                     if recorded_path is None:
                         return (None, "", "Please record a clip first.", None)
-                    tmpdir = Path(tempfile.mkdtemp(prefix="syncguard_live_"))
                     try:
-                        if mode == "swap":
-                            video_for_model = tmpdir / "swapped.mp4"
-                            chosen = swap_audio(recorded_path, video_for_model)
-                            expected = "fake"
-                            plot_title = f"Sync score — swapped audio: {chosen}"
-                        else:
-                            video_for_model = recorded_path
-                            expected = "real"
-                            plot_title = "Sync score — your recording (unaltered)"
-                        proc = process_live_clip(video_for_model, live_face_detector)
+                        proc = process_live_clip(recorded_path, live_face_detector)
                     except Exception as e:
                         return (None, "",
                                 f"**Error:** {type(e).__name__}: {e}",
                                 None)
+                    video_for_model = recorded_path
+                    plot_title = "Sync score — your recording"
+                    expected = "real"
 
                     if proc["detection_rate"] < 0.3:
                         return (str(video_for_model), "",
@@ -259,15 +256,15 @@ def build_demo():
 
                 with gr.Tab("Live Challenge"):
                     gr.Markdown(
-                        "### Record Yourself and Test the Model\n"
+                        "### Test the Model on Your Own Recording\n"
                         "Record a 3-5 second clip of yourself speaking. "
-                        "Choose a mode:\n"
-                        "- **Analyze as-is:** keep your real audio. The model "
-                        "should classify you as **REAL**.\n"
-                        "- **Swap audio (lip-sync challenge):** we replace "
-                        "your audio with a random sentence from our pool, "
-                        "creating a lip-sync mismatch. The model should "
-                        "detect it as **FAKE**."
+                        "The model should classify it as **REAL** — "
+                        "confirming it doesn't false-positive on genuine "
+                        "webcam recordings.\n\n"
+                        "For the model's fake-detection capability on actual "
+                        "deepfake content (wav2lip, face-swap, etc.), see "
+                        "the **Gallery** tab — 0.96 AUC on the FakeAVCeleb "
+                        "test split."
                     )
                     with gr.Row():
                         webcam_rec = gr.Video(
@@ -275,22 +272,12 @@ def build_demo():
                             include_audio=True,
                             label="Record yourself (press record, speak, stop)",
                         )
-                        with gr.Column():
-                            mode_picker = gr.Radio(
-                                choices=[
-                                    ("Analyze as-is (expect REAL)", "as-is"),
-                                    ("Swap audio (expect FAKE)", "swap"),
-                                ],
-                                label="Mode",
-                                value="as-is",
-                            )
-                            live_analyze_btn = gr.Button(
-                                "Analyze",
-                                variant="primary", size="lg",
-                            )
+                        live_analyze_btn = gr.Button(
+                            "Analyze", variant="primary", size="lg",
+                        )
                     with gr.Row():
                         swapped_video_out = gr.Video(
-                            label="What the model sees", autoplay=True,
+                            label="Your recording", autoplay=True,
                         )
                         live_plot_out = gr.Image(
                             label="Sync-score curve", type="pil",
@@ -300,7 +287,7 @@ def build_demo():
 
                     live_analyze_btn.click(
                         on_live_analyze,
-                        inputs=[webcam_rec, mode_picker],
+                        inputs=[webcam_rec],
                         outputs=[
                             swapped_video_out,
                             live_banner_out,

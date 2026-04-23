@@ -25,7 +25,11 @@ CATEGORY_QUOTAS = {
 
 def pick_top_k(scores, labels, sample_ids, categories, category_name,
                k, ground_truth):
-    """Pick k clips where model predicted correctly with highest confidence."""
+    """Pick k DISTINCT clips where model predicted correctly with highest confidence.
+
+    Deduplicates by sample_id — eval dataloaders sometimes emit the same
+    sample twice due to batch padding, and we don't want gallery duplicates.
+    """
     mask = (categories == category_name) & (labels == ground_truth)
     if ground_truth == 1:
         correct = mask & (scores > 0.5)
@@ -37,9 +41,19 @@ def pick_top_k(scores, labels, sample_ids, categories, category_name,
         return []
 
     conf = np.abs(scores[idxs] - 0.5)
-    order = np.argsort(-conf)[:k]
-    picked = idxs[order]
-    return [(str(sample_ids[i]), float(scores[i])) for i in picked]
+    order = np.argsort(-conf)
+    picked = []
+    seen = set()
+    for rel_idx in order:
+        i = idxs[rel_idx]
+        sid = str(sample_ids[i])
+        if sid in seen:
+            continue
+        seen.add(sid)
+        picked.append((sid, float(scores[i])))
+        if len(picked) >= k:
+            break
+    return picked
 
 
 def main():
