@@ -2,10 +2,18 @@ import cv2
 import numpy as np
 import mediapipe as mp
 from mediapipe.tasks.python import BaseOptions, vision
-from retinaface import RetinaFace
 import os
 import urllib.request
 import logging
+
+# RetinaFace is only needed for the detect_face() code path.
+# For MediaPipe-only usage (live demo on Mac), the import is deferred.
+try:
+    from retinaface import RetinaFace
+    _HAS_RETINAFACE = True
+except ImportError:
+    RetinaFace = None
+    _HAS_RETINAFACE = False
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +90,12 @@ class FaceDetector:
         else:
             detect_frame = frame
 
+        if not _HAS_RETINAFACE:
+            raise RuntimeError(
+                "RetinaFace is not installed. "
+                "Use MediaPipe-only methods (extract_mouth_roi, "
+                "process_video_frames_with_ear) for detection."
+            )
         detections = RetinaFace.detect_faces(detect_frame)
         if not isinstance(detections, dict) or len(detections) == 0:
             return None

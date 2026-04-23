@@ -28,6 +28,8 @@ class AnalysisResult:
     ear_anomaly_score: float
     clip_duration_s: float
     mean_sync: float
+    sync_prob: float = 0.0        # Sync head's P(fake); near 0 = confident real
+    audio_prob: float = 0.0       # Audio classifier's P(fake)
     timings: dict[str, float] = field(default_factory=dict)
 
 

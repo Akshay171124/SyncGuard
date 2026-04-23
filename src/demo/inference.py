@@ -75,12 +75,41 @@ class DemoInference:
     def __init__(self, config_path, checkpoint_path, audio_checkpoint_path=None,
                  device=None):
         self.config = load_config(config_path)
+
+        # v4+CA checkpoint includes cross-attention + DCT extractor heads.
+        # The shipped default.yaml has these disabled (training config had
+        # them enabled via CLI overrides or a separate experiment config),
+        # so we enable them explicitly here so the model architecture matches
+        # the checkpoint. Without this, load_state_dict(strict=False) silently
+        # drops ~20% of the trained weights and the sync head degenerates
+        # to a bias-dominated "always real" output (sigmoid ~ 0.001).
+        model_cfg = self.config["model"]
+        model_cfg.setdefault("cross_attention", {})
+        model_cfg["cross_attention"]["enabled"] = True
+        model_cfg["cross_attention"].setdefault("num_heads", 2)
+        model_cfg["cross_attention"].setdefault("dropout", 0.1)
+        model_cfg["cross_attention"].setdefault("embed_classifier_hidden", 256)
+        model_cfg["cross_attention"].setdefault("fusion_init", 0.0)
+        model_cfg.setdefault("dct_extractor", {})
+        model_cfg["dct_extractor"]["enabled"] = True
+        model_cfg["dct_extractor"]["output_dim"] = 16  # pool_dim=(2*256+dct)*2=1024+2*dct=1056 -> dct=16
+
         self.device = device or get_device(self.config)
         self.model = build_syncguard(self.config).to(self.device)
         ckpt = _load_checkpoint(checkpoint_path, self.device)
         state = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
-        self.model.load_state_dict(state, strict=False)
-        self.model.train(False)   # inference mode (equivalent to .eval())
+        missing, unexpected = self.model.load_state_dict(state, strict=False)
+        if missing:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Checkpoint missing keys (first 5): %s", list(missing)[:5]
+            )
+        if unexpected:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Checkpoint unexpected keys (first 5): %s", list(unexpected)[:5]
+            )
+        self.model.train(False)
         self.fps_sync = self.config["preprocessing"]["audio"]["target_fps"]
 
         # Optional cascade audio classifier (boosts FV-RA/RV-FA AUC)
@@ -96,7 +125,7 @@ class DemoInference:
 
     @torch.no_grad()
     def analyze(self, mouth_crops, audio_waveform, ear_features=None,
-                clip_duration_s=None):
+                clip_duration_s=None, use_audio_head=True):
         """Run one forward pass and build an AnalysisResult.
 
         Args:
@@ -104,6 +133,11 @@ class DemoInference:
             audio_waveform: np.ndarray (N,) float32 at 16kHz
             ear_features: np.ndarray (T,) or None
             clip_duration_s: float or None (inferred from waveform if None)
+            use_audio_head: if False, skip the cascade audio classifier in
+                            the verdict (useful for out-of-distribution
+                            inputs like live webcam audio). The audio head
+                            still runs and its score is returned for
+                            transparency.
 
         Returns:
             AnalysisResult
@@ -129,12 +163,15 @@ class DemoInference:
 
         sync_prob = float(torch.sigmoid(out.logits.squeeze()).item())
 
+        audio_prob = 0.0
         if self.audio_model is not None:
             audio_logit = self.audio_model(wf).squeeze()
             audio_prob = float(torch.sigmoid(audio_logit).item())
+            timings["audio_forward"] = time.perf_counter() - t_pre - timings["forward"]
+
+        if self.audio_model is not None and use_audio_head:
             fake_prob = max(sync_prob, audio_prob)
             real_prob = max(1.0 - sync_prob, 1.0 - audio_prob)
-            timings["audio_forward"] = time.perf_counter() - t_pre - timings["forward"]
         else:
             fake_prob = sync_prob
             real_prob = 1.0 - sync_prob
@@ -162,6 +199,8 @@ class DemoInference:
                 self.config["preprocessing"]["audio"]["sample_rate"]
             )
 
+        audio_prob_out = audio_prob
+
         return AnalysisResult(
             verdict=verdict,
             confidence=display_conf,
@@ -171,5 +210,7 @@ class DemoInference:
             ear_anomaly_score=ear_anomaly,
             clip_duration_s=clip_duration_s,
             mean_sync=mean_sync,
+            sync_prob=sync_prob,
+            audio_prob=audio_prob_out,
             timings=timings,
         )

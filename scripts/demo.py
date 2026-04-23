@@ -8,6 +8,7 @@ Runs entirely on the Mac. No HPC, no internet required at demo time.
 """
 import os
 import sys
+import tempfile
 from io import BytesIO
 from pathlib import Path
 
@@ -58,11 +59,54 @@ def render_sync_plot(sync_curve, threshold, dip_segments, fps, title=""):
     return Image.open(buf)
 
 
-def verdict_banner_html(verdict, confidence, ground_truth):
+def _bar(label, prob, color):
+    pct = int(round(prob * 100))
+    return f"""
+    <div style="margin:4px 0;">
+        <div style="display:flex; justify-content:space-between;
+                    font-size:13px; color:#333; margin-bottom:2px;">
+            <span>{label}</span><span>{pct}% fake</span>
+        </div>
+        <div style="background:#e0e0e0; border-radius:4px; height:10px;
+                    overflow:hidden;">
+            <div style="background:{color}; width:{pct}%; height:100%;"></div>
+        </div>
+    </div>
+    """
+
+
+def verdict_banner_html(verdict, confidence, ground_truth,
+                        sync_prob=None, audio_prob=None,
+                        mean_sync=None, num_dips=None):
     color = C_FAKE if verdict == "fake" else C_REAL
     icon = "FAKE" if verdict == "fake" else "REAL"
     correct = "Correct" if verdict == ground_truth else "Incorrect"
     badge_color = C_REAL if verdict == ground_truth else C_FAKE
+
+    signals_html = ""
+    if sync_prob is not None and audio_prob is not None:
+        curve_stats = ""
+        if mean_sync is not None:
+            curve_stats = f"""
+            <div style="margin-top:8px; font-size:13px; color:#444;">
+                <strong>Sync curve:</strong>
+                mean = {mean_sync:.3f},
+                dips below {SYNC_THRESHOLD:.2f} = {num_dips}
+            </div>
+            """
+        signals_html = f"""
+        <div style="padding:10px 16px; border-radius:8px; background:#fafafa;
+                    margin-top:10px; font-family:system-ui;">
+            <div style="font-size:12px; color:#666; font-weight:600;
+                        text-transform:uppercase; margin-bottom:6px;">
+                Per-head signals (cascade inputs)
+            </div>
+            {_bar("Sync head (v4+CA)", sync_prob, "#1A5276")}
+            {_bar("Audio classifier", audio_prob, "#8E44AD")}
+            {curve_stats}
+        </div>
+        """
+
     return f"""
     <div style="padding:16px; border-radius:12px; background:{color};
                 color:white; font-size:22px; text-align:center;
@@ -73,6 +117,7 @@ def verdict_banner_html(verdict, confidence, ground_truth):
                 color:{badge_color}; font-weight:600;">
         {correct} — ground truth: {ground_truth.upper()}
     </div>
+    {signals_html}
     """
 
 
@@ -108,6 +153,10 @@ def build_demo():
         )
         banner = verdict_banner_html(
             result.verdict, result.confidence, clip.ground_truth,
+            sync_prob=result.sync_prob, audio_prob=result.audio_prob,
+            mean_sync=result.mean_sync,
+            num_dips=len([s for s, e in result.sync_dip_segments
+                          if (e - s) >= 0.15]),
         )
         explanation = generate_explanation(result)
         return str(clip.video_path), banner, explanation, plot
@@ -144,9 +193,120 @@ def build_demo():
                 )
 
             if LIVE_ENABLED:
+                from src.demo.live_challenge import swap_audio, process_live_clip
+                from src.preprocessing.face_detector import FaceDetector
+
+                print("Initializing MediaPipe face detector for live tab...")
+                live_face_detector = FaceDetector(crop_size=96,
+                                                  confidence_threshold=0.5)
+
+                def on_live_analyze(recorded_path, mode):
+                    """mode: 'as-is' (no swap, expect real) or 'swap' (expect fake)."""
+                    if recorded_path is None:
+                        return (None, "", "Please record a clip first.", None)
+                    tmpdir = Path(tempfile.mkdtemp(prefix="syncguard_live_"))
+                    try:
+                        if mode == "swap":
+                            video_for_model = tmpdir / "swapped.mp4"
+                            chosen = swap_audio(recorded_path, video_for_model)
+                            expected = "fake"
+                            plot_title = f"Sync score — swapped audio: {chosen}"
+                        else:
+                            video_for_model = recorded_path
+                            expected = "real"
+                            plot_title = "Sync score — your recording (unaltered)"
+                        proc = process_live_clip(video_for_model, live_face_detector)
+                    except Exception as e:
+                        return (None, "",
+                                f"**Error:** {type(e).__name__}: {e}",
+                                None)
+
+                    if proc["detection_rate"] < 0.3:
+                        return (str(video_for_model), "",
+                                f"**Face detection failed** on "
+                                f"{proc['detection_rate']*100:.0f}% of frames. "
+                                f"Try again facing the camera with good lighting.",
+                                None)
+
+                    # Live tab: skip the cascade audio classifier — it's
+                    # calibrated on FakeAVCeleb audio and mis-fires on
+                    # webcam voices (every live clip would be "fake").
+                    # Verdict uses the sync head alone, which measures
+                    # audio-visual alignment geometrically and generalizes.
+                    result = infer.analyze(
+                        mouth_crops=proc["mouth_crops"],
+                        audio_waveform=proc["audio_waveform"],
+                        ear_features=proc["ear_features"],
+                        clip_duration_s=proc["duration_s"],
+                        use_audio_head=False,
+                    )
+                    plot = render_sync_plot(
+                        result.sync_curve, SYNC_THRESHOLD,
+                        result.sync_dip_segments, infer.fps_sync,
+                        title=plot_title,
+                    )
+                    banner = verdict_banner_html(
+                        result.verdict, result.confidence,
+                        ground_truth=expected,
+                        sync_prob=result.sync_prob,
+                        audio_prob=result.audio_prob,
+                        mean_sync=result.mean_sync,
+                        num_dips=len([s for s, e in result.sync_dip_segments
+                                     if (e - s) >= 0.15]),
+                    )
+                    explanation = generate_explanation(result)
+                    return str(video_for_model), banner, explanation, plot
+
                 with gr.Tab("Live Challenge"):
                     gr.Markdown(
-                        "Coming in Phase 2 — webcam + audio-swap challenge."
+                        "### Record Yourself and Test the Model\n"
+                        "Record a 3-5 second clip of yourself speaking. "
+                        "Choose a mode:\n"
+                        "- **Analyze as-is:** keep your real audio. The model "
+                        "should classify you as **REAL**.\n"
+                        "- **Swap audio (lip-sync challenge):** we replace "
+                        "your audio with a random sentence from our pool, "
+                        "creating a lip-sync mismatch. The model should "
+                        "detect it as **FAKE**."
+                    )
+                    with gr.Row():
+                        webcam_rec = gr.Video(
+                            sources=["webcam"],
+                            include_audio=True,
+                            label="Record yourself (press record, speak, stop)",
+                        )
+                        with gr.Column():
+                            mode_picker = gr.Radio(
+                                choices=[
+                                    ("Analyze as-is (expect REAL)", "as-is"),
+                                    ("Swap audio (expect FAKE)", "swap"),
+                                ],
+                                label="Mode",
+                                value="as-is",
+                            )
+                            live_analyze_btn = gr.Button(
+                                "Analyze",
+                                variant="primary", size="lg",
+                            )
+                    with gr.Row():
+                        swapped_video_out = gr.Video(
+                            label="What the model sees", autoplay=True,
+                        )
+                        live_plot_out = gr.Image(
+                            label="Sync-score curve", type="pil",
+                        )
+                    live_banner_out = gr.HTML()
+                    live_explanation_out = gr.Markdown()
+
+                    live_analyze_btn.click(
+                        on_live_analyze,
+                        inputs=[webcam_rec, mode_picker],
+                        outputs=[
+                            swapped_video_out,
+                            live_banner_out,
+                            live_explanation_out,
+                            live_plot_out,
+                        ],
                     )
 
     return app
