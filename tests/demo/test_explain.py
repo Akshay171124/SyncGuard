@@ -44,7 +44,7 @@ class TestFakeCategories:
     def test_fv_fa_pattern_sync_and_ear(self):
         result = _mk(verdict="fake", confidence=0.94,
                      sync_dip_segments=[(1.0, 1.4), (2.5, 2.9)],
-                     ear_anomaly_score=2.8, mean_sync=0.42)
+                     ear_anomaly_score=120.0, mean_sync=0.42)
         text = generate_explanation(result)
         assert "face-swap" in text.lower() and "audio" in text.lower()
 
@@ -59,7 +59,7 @@ class TestFakeCategories:
     def test_fv_ra_pattern_ear_only(self):
         result = _mk(verdict="fake", confidence=0.76,
                      sync_dip_segments=[],
-                     ear_anomaly_score=2.5, mean_sync=0.62)
+                     ear_anomaly_score=100.0, mean_sync=0.62)
         text = generate_explanation(result)
         assert "blink" in text.lower() or "face-swap" in text.lower()
 
