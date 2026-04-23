@@ -132,14 +132,21 @@ class DemoInference:
         if self.audio_model is not None:
             audio_logit = self.audio_model(wf).squeeze()
             audio_prob = float(torch.sigmoid(audio_logit).item())
-            # Max fusion: cascade picks whichever head is most confident-fake
             fake_prob = max(sync_prob, audio_prob)
+            real_prob = max(1.0 - sync_prob, 1.0 - audio_prob)
             timings["audio_forward"] = time.perf_counter() - t_pre - timings["forward"]
         else:
             fake_prob = sync_prob
+            real_prob = 1.0 - sync_prob
 
+        # Verdict uses max-fusion (any head screams fake -> fake).
+        # Confidence uses asymmetric fusion:
+        #  - for fake verdict: max(sync_p, audio_p) — the "loudest" fake signal
+        #  - for real verdict: max(1-sync_p, 1-audio_p) — the strongest real signal
+        # This avoids the miscalibrated audio head pulling real confidence
+        # down to 54% when the sync head is 99.9% sure it's real.
         verdict = "fake" if fake_prob >= 0.5 else "real"
-        display_conf = fake_prob if verdict == "fake" else (1.0 - fake_prob)
+        display_conf = fake_prob if verdict == "fake" else real_prob
 
         sync_curve = out.sync_scores.squeeze(0).cpu().numpy()
         mean_sync = float(np.mean(sync_curve))
