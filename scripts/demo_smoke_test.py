@@ -15,12 +15,14 @@ from src.demo.explain import generate_explanation
 
 CONFIG = "configs/default.yaml"
 CHECKPOINT = "demo_assets/checkpoints/finetune_best.pt"
+AUDIO_CHECKPOINT = "demo_assets/checkpoints/audio_clf_best.pt"
 GALLERY = "demo_assets/gallery"
 
 
 def main():
     print("Loading model...")
-    infer = DemoInference(CONFIG, CHECKPOINT)
+    infer = DemoInference(CONFIG, CHECKPOINT,
+                          audio_checkpoint_path=AUDIO_CHECKPOINT)
     print(f"  device={infer.device}")
 
     rows = []

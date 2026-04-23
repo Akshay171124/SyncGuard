@@ -11,6 +11,7 @@ from src.demo.explain import (
     MIN_DIP_DURATION_S,
 )
 from src.models.syncguard import build_syncguard, SyncGuardOutput
+from src.models.audio_classifier import build_standalone_audio_classifier
 from src.utils.config import load_config, get_device
 
 
@@ -39,6 +40,25 @@ def _ear_anomaly_score(ear_curve):
     return overall_var / baseline
 
 
+def _normalize_mouth_crops(crops):
+    """Convert mouth crops to (T, 1, 96, 96) float32 in [0, 1].
+
+    Accepts (T, H, W, 3) RGB, (T, H, W) grayscale, or (T, 1, H, W) grayscale.
+    Matches the conversion done in src/training/dataset.py._load_mouth_crops.
+    """
+    crops = np.asarray(crops)
+    if crops.ndim == 4 and crops.shape[-1] == 3:
+        # (T, H, W, 3) RGB -> (T, H, W) grayscale
+        crops = np.mean(crops, axis=-1)
+    if crops.ndim == 3:
+        # (T, H, W) -> (T, 1, H, W)
+        crops = crops[:, np.newaxis, :, :]
+    crops = crops.astype(np.float32)
+    if crops.max() > 1.0:
+        crops = crops / 255.0
+    return crops
+
+
 def _load_checkpoint(path, device):
     """Load a SyncGuard checkpoint. Tries weights_only=True first (safer);
     falls back to weights_only=False for legacy checkpoints that embed
@@ -52,15 +72,27 @@ def _load_checkpoint(path, device):
 class DemoInference:
     """Loads SyncGuard v4+CA once; .analyze() runs one forward pass."""
 
-    def __init__(self, config_path, checkpoint_path, device=None):
+    def __init__(self, config_path, checkpoint_path, audio_checkpoint_path=None,
+                 device=None):
         self.config = load_config(config_path)
-        self.device = device or get_device()
+        self.device = device or get_device(self.config)
         self.model = build_syncguard(self.config).to(self.device)
         ckpt = _load_checkpoint(checkpoint_path, self.device)
         state = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
         self.model.load_state_dict(state, strict=False)
         self.model.train(False)   # inference mode (equivalent to .eval())
         self.fps_sync = self.config["preprocessing"]["audio"]["target_fps"]
+
+        # Optional cascade audio classifier (boosts FV-RA/RV-FA AUC)
+        self.audio_model = None
+        if audio_checkpoint_path is not None:
+            self.audio_model = build_standalone_audio_classifier(
+                self.config
+            ).to(self.device)
+            ackpt = _load_checkpoint(audio_checkpoint_path, self.device)
+            astate = ackpt["model_state_dict"] if "model_state_dict" in ackpt else ackpt
+            self.audio_model.load_state_dict(astate, strict=False)
+            self.audio_model.train(False)
 
     @torch.no_grad()
     def analyze(self, mouth_crops, audio_waveform, ear_features=None,
@@ -79,7 +111,8 @@ class DemoInference:
         timings = {}
         t0 = time.perf_counter()
 
-        mc = torch.from_numpy(mouth_crops).unsqueeze(0).to(self.device)
+        mc_np = _normalize_mouth_crops(mouth_crops)
+        mc = torch.from_numpy(mc_np).unsqueeze(0).to(self.device)
         wf = torch.from_numpy(audio_waveform).unsqueeze(0).to(self.device)
         ear = None
         if ear_features is not None:
@@ -94,10 +127,19 @@ class DemoInference:
         )
         timings["forward"] = time.perf_counter() - t_pre
 
-        logit = out.logits.squeeze().item()
-        confidence = float(torch.sigmoid(torch.tensor(logit)).item())
-        verdict = "fake" if confidence >= 0.5 else "real"
-        display_conf = confidence if verdict == "fake" else (1.0 - confidence)
+        sync_prob = float(torch.sigmoid(out.logits.squeeze()).item())
+
+        if self.audio_model is not None:
+            audio_logit = self.audio_model(wf).squeeze()
+            audio_prob = float(torch.sigmoid(audio_logit).item())
+            # Max fusion: cascade picks whichever head is most confident-fake
+            fake_prob = max(sync_prob, audio_prob)
+            timings["audio_forward"] = time.perf_counter() - t_pre - timings["forward"]
+        else:
+            fake_prob = sync_prob
+
+        verdict = "fake" if fake_prob >= 0.5 else "real"
+        display_conf = fake_prob if verdict == "fake" else (1.0 - fake_prob)
 
         sync_curve = out.sync_scores.squeeze(0).cpu().numpy()
         mean_sync = float(np.mean(sync_curve))
