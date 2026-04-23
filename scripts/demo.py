@@ -62,15 +62,18 @@ def render_sync_plot(sync_curve, threshold, dip_segments, fps, title=""):
 def _bar(label, prob, color):
     pct = int(round(prob * 100))
     return f"""
-    <div style="margin:6px 0;">
-        <div style="display:flex; justify-content:space-between;
-                    font-size:14px; color:#111; font-weight:500;
-                    margin-bottom:4px;">
-            <span>{label}</span><span>{pct}% fake</span>
+    <div style="margin:8px 0 !important;">
+        <div style="display:flex !important; justify-content:space-between !important;
+                    font-size:15px !important; color:#ffffff !important;
+                    font-weight:600 !important; margin-bottom:5px !important;">
+            <span style="color:#ffffff !important;">{label}</span>
+            <span style="color:#ffffff !important;">{pct}% fake</span>
         </div>
-        <div style="background:#d0d0d0; border-radius:4px; height:12px;
-                    overflow:hidden; border:1px solid #b0b0b0;">
-            <div style="background:{color}; width:{pct}%; height:100%;"></div>
+        <div style="background:#4a5568 !important; border-radius:4px !important;
+                    height:14px !important; overflow:hidden !important;
+                    border:1px solid #2d3748 !important;">
+            <div style="background:{color} !important; width:{pct}% !important;
+                        height:100% !important;"></div>
         </div>
     </div>
     """
@@ -89,25 +92,29 @@ def verdict_banner_html(verdict, confidence, ground_truth,
         curve_stats = ""
         if mean_sync is not None:
             curve_stats = f"""
-            <div style="margin-top:10px; padding-top:8px; border-top:1px solid #ccc;
-                        font-size:14px; color:#111;">
-                <strong style="color:#000;">Sync curve:</strong>
-                mean = <span style="font-weight:600;">{mean_sync:.3f}</span>,
+            <div style="margin-top:12px !important; padding-top:10px !important;
+                        border-top:1px solid #4a5568 !important;
+                        font-size:15px !important; color:#ffffff !important;">
+                <strong style="color:#ffffff !important;">Sync curve:</strong>
+                <span style="color:#ffffff !important;">mean =
+                <span style="font-weight:700 !important; color:#ffffff !important;">{mean_sync:.3f}</span>,
                 dips below {SYNC_THRESHOLD:.2f} =
-                <span style="font-weight:600;">{num_dips}</span>
+                <span style="font-weight:700 !important; color:#ffffff !important;">{num_dips}</span>
+                </span>
             </div>
             """
         signals_html = f"""
-        <div style="padding:12px 16px; border-radius:8px; background:#e8ecef;
-                    border:1px solid #c0c8cf; margin-top:12px;
-                    font-family:system-ui; color:#111;">
-            <div style="font-size:13px; color:#2c3e50; font-weight:700;
-                        text-transform:uppercase; margin-bottom:8px;
-                        letter-spacing:0.5px;">
+        <div style="padding:14px 18px !important; border-radius:10px !important;
+                    background:#1a202c !important; border:2px solid #2d3748 !important;
+                    margin-top:14px !important; font-family:system-ui !important;
+                    color:#ffffff !important;">
+            <div style="font-size:13px !important; color:#a0aec0 !important;
+                        font-weight:700 !important; text-transform:uppercase !important;
+                        margin-bottom:10px !important; letter-spacing:1px !important;">
                 Per-head signals (cascade inputs)
             </div>
-            {_bar("Sync head (v4+CA)", sync_prob, "#1A5276")}
-            {_bar("Audio classifier", audio_prob, "#8E44AD")}
+            {_bar("Sync head (v4+CA)", sync_prob, "#4299e1")}
+            {_bar("Audio classifier", audio_prob, "#b794f4")}
             {curve_stats}
         </div>
         """
@@ -242,14 +249,14 @@ def build_demo():
                         result.sync_dip_segments, infer.fps_sync,
                         title=plot_title,
                     )
+                    # Live tab: omit per-head signals panel. The audio
+                    # classifier is out-of-distribution on webcam mic
+                    # audio and would show misleading ~99% fake even on
+                    # genuine real recordings. The sync-only verdict is
+                    # already what the banner reflects.
                     banner = verdict_banner_html(
                         result.verdict, result.confidence,
                         ground_truth=expected,
-                        sync_prob=result.sync_prob,
-                        audio_prob=result.audio_prob,
-                        mean_sync=result.mean_sync,
-                        num_dips=len([s for s, e in result.sync_dip_segments
-                                     if (e - s) >= 0.15]),
                     )
                     explanation = generate_explanation(result)
                     return str(video_for_model), banner, explanation, plot
