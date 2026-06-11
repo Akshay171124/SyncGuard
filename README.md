@@ -242,6 +242,136 @@ Tests cover all major components without requiring GPU or dataset downloads:
 
 Tests that require optional dependencies (e.g., mediapipe for EAR) are automatically skipped when the dependency is not installed.
 
+## End-to-End Reproducibility Walkthrough
+
+This section walks through reproducing the headline numbers from the final report (96.3% AUC on FakeAVCeleb, 52.6% AUC on DFDC zero-shot). Each step lists the command, expected runtime, and what you should see if it worked.
+
+### Step 1 — Smoke test (no GPU, no data, ~30 seconds)
+
+Verify the environment is set up correctly:
+
+```bash
+python -m pytest tests/ -v
+```
+
+Expected output:
+```
+=================== 215 passed, 4 skipped in 11.8s ===================
+```
+
+If this fails, do not proceed — fix the environment first. The 4 skipped tests are mediapipe-dependent EAR tests that require the optional `mediapipe` package.
+
+### Step 2 — Download pretrained models (one-time, ~5 minutes)
+
+Pre-fetch the Wav2Vec 2.0 weights to your HuggingFace cache to avoid wasting GPU time during training:
+
+```bash
+python -c "from transformers import Wav2Vec2Model; Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base-960h')"
+```
+
+Expected output: `Downloading … 100%` then silent success. Produces ~360 MB under `$HF_HOME` (default `~/.cache/huggingface`).
+
+### Step 3 — Download datasets (~20–60 minutes depending on network)
+
+Datasets are hosted on [Google Drive](https://drive.google.com/drive/folders/1wQ9cdWo5R9O8ZvwPO7XUnfMvVOgoIF1E?usp=drive_link). You can download either raw videos (to rerun preprocessing end-to-end) or the already-preprocessed `.npy` features (recommended — saves ~10 hours of preprocessing on HPC).
+
+Place files so that:
+- Raw videos live under `data/raw/<dataset>/…`
+- Preprocessed features live under `data/processed/<dataset>/…`
+
+Paths are configurable via `configs/default.yaml`.
+
+### Step 4 — (Optional) Preprocess from raw (~6–10 hours on HPC)
+
+Skip this step if you downloaded the preprocessed features directly.
+
+```bash
+python scripts/preprocess_dataset.py --dataset fakeavceleb --config configs/default.yaml --workers 14
+```
+
+Expected output (per sample, trimmed):
+```
+[12:03:17] fakeavceleb/real/id00123/00042.mp4  →  T=144 frames  audio=16000Hz  OK
+[12:03:19] fakeavceleb/fake/id00456/00088.mp4  →  T=131 frames  SKIPPED (RetinaFace confidence < 0.8 on 18 frames)
+…
+Completed 21544/21544 samples — 19872 written, 1672 skipped
+```
+
+### Step 5 — Phase 1 pretraining (HPC, ~8 hours on H200)
+
+```bash
+sbatch scripts/slurm_pretrain.sh     # uses configs/pretrain_frozen.yaml by default
+```
+
+Track progress in W&B (`SyncGuard / phase1-pretrain`) or at `outputs/logs/pretrain.json`. Expected best metrics at epoch ~17:
+
+| Metric | Value |
+|---|---|
+| Val InfoNCE loss | **8.06** |
+| Val sync-score | **0.978** |
+
+Checkpoint written to `outputs/checkpoints/pretrain_best.pt`.
+
+### Step 6 — Phase 2 fine-tuning (HPC, ~6 hours on H200)
+
+```bash
+sbatch scripts/slurm_finetune.sh     # uses configs/finetune_v4_best.yaml
+```
+
+Expected best metrics on the FakeAVCeleb val set around epoch 17 (early stopping triggers):
+
+| Metric | Value |
+|---|---|
+| Val AUC | **0.953** |
+| Best checkpoint | `outputs/checkpoints/finetune_best.pt` |
+
+### Step 7 — Evaluate on FakeAVCeleb (~5 minutes on a single H200)
+
+```bash
+python scripts/evaluate.py --config configs/default.yaml \
+    --checkpoint outputs/checkpoints/finetune_best.pt --test_set fakeavceleb
+```
+
+Expected output:
+```
+===== FakeAVCeleb Test Set (n=2950) =====
+AUC-ROC:  0.9628
+EER:      0.0931
+pAUC@0.1: 0.8607
+Per-category:
+  FV-RA (face-swap only):   AUC=0.9398
+  RV-FA (voice-clone only): AUC=0.8949
+  FV-FA (both fake):        AUC=0.9872
+Results written to outputs/logs/eval_fakeavceleb.json
+```
+
+### Step 8 — Zero-shot cross-dataset evaluation on DFDC (~2 minutes)
+
+```bash
+python scripts/evaluate.py --config configs/default.yaml \
+    --checkpoint outputs/checkpoints/finetune_best.pt --test_set dfdc
+```
+
+Expected output:
+```
+===== DFDC Part 0 Test Set (n=1343) =====
+AUC-ROC:  0.5263
+EER:      0.4911
+pAUC@0.1: 0.0644
+Note: zero-shot transfer — model never saw DFDC during training.
+```
+
+**Interpretation:** The DFDC number is intentionally near chance. This is a known limitation of sync-based methods against face-swap generators that preserve lip motion (see `docs/superpowers/specs/review-findings.md` for the full ablation).
+
+### Sanity checks during a fresh run
+
+Watch for these early signals to catch problems before wasting GPU-hours:
+
+- **Loss explodes to NaN in first 100 steps:** Wav2Vec backbone accidentally unfrozen (check `config.audio.freeze_backbone`).
+- **Val AUC stuck at 0.5 across 3 epochs:** Check speaker-disjoint split — train speakers leaking into val defeats the metric.
+- **Sync-score saturates to 1.0 in pretraining:** Wav2Vec unfrozen during pretrain, causing representation collapse.
+- **DataLoader crashes batch 0 with shape mismatch:** Collation assumes wrong channel count for CLIP+RGB pipeline (fixed in v3.3.0).
+
 ## Datasets
 
 **Dataset Download:** All datasets (raw and preprocessed) are available on [Google Drive](https://drive.google.com/drive/folders/1wQ9cdWo5R9O8ZvwPO7XUnfMvVOgoIF1E?usp=drive_link).
