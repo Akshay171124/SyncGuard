@@ -26,6 +26,22 @@ TARGET_SR = 16000
 TARGET_FPS = 25
 
 
+def _audio_signature(path):
+    """First 10 samples of 16kHz audio, for debug/verification."""
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error",
+             "-i", str(path),
+             "-ar", "16000", "-ac", "1",
+             "-f", "s16le", "-t", "0.01", "-"],
+            check=True, capture_output=True,
+        )
+        samples = np.frombuffer(proc.stdout, dtype=np.int16)[:10]
+        return samples.tolist()
+    except Exception:
+        return None
+
+
 def swap_audio(input_video, output_video, pool_dir=AUDIO_POOL_DIR):
     """Replace the audio track of input_video with a random clip from the pool.
 
@@ -52,6 +68,17 @@ def swap_audio(input_video, output_video, pool_dir=AUDIO_POOL_DIR):
         str(output_video),
     ]
     subprocess.run(cmd, check=True, capture_output=True)
+
+    # Debug: log audio signatures so we can verify the swap actually happened
+    orig_sig = _audio_signature(input_video)
+    swap_sig = _audio_signature(output_video)
+    pool_sig = _audio_signature(chosen)
+    logger.info(f"swap_audio: pool_file={chosen.name}")
+    logger.info(f"  original video audio (first 10 samples): {orig_sig}")
+    logger.info(f"  swapped video audio  (first 10 samples): {swap_sig}")
+    logger.info(f"  pool file audio      (first 10 samples): {pool_sig}")
+    if orig_sig is not None and swap_sig is not None and orig_sig == swap_sig:
+        logger.warning("swap_audio: OUTPUT AUDIO MATCHES INPUT — swap did not take effect!")
     return chosen.name
 
 
