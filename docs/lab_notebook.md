@@ -1372,3 +1372,48 @@ Preserved the two surviving checkpoint artifacts from April development after an
 ### Artifacts
 - Preserved: `demo_assets/checkpoints/april_reference/finetune_best.pt`
 - Preserved: `demo_assets/checkpoints/april_reference/audio_clf_best.pt`
+
+## 2026-09-10 — Part A Hardening Complete
+**Owner:** Akshay
+**Phase:** Rebuild / Part A
+
+### What I Did
+Executed Part A of the rebuild plan: six tasks hardening the codebase before any
+GPU job runs. Branch `rebuild/part-a`, 22 commits.
+
+- Deterministic seeding (`src/utils/seeding.py`), wired into all training entry points.
+- Checkpoint provenance metadata (`src/utils/provenance.py`), embedded in every checkpoint.
+- One shared checkpoint saver (`src/utils/checkpoint.py`) replacing two duplicates, with
+  `config` a required argument so no stage can save an untraceable checkpoint.
+- A loud warning when AV-HuBERT is built without pretrained weights.
+- A persistent crash-loop guard for SLURM auto-resubmit (`scripts/lib/resubmit_guard.sh`).
+- Committed rebuild configs, wired into the launchers.
+
+### Results
+- 263 tests passing (baseline was 231, and the README's claimed 215 was stale).
+- All five pipeline checkpoints now route through the shared saver.
+- Checkpoints auto-archive to `$HOME/ckpt_archive` on success in both launchers.
+
+### Observations
+- **The crash-loop guard was initially broken in a way a passing test suite could not
+  see.** The plan specified `if [ $? -eq 0 ]; then guard_reset ...; fi` at the end of the
+  job script. In bash a skipped `if` body returns 0, so `$?` read the *preceding block's*
+  status, not the training result — meaning the counter reset immediately after every
+  increment, in the same job, and could never accumulate across submissions. The guard
+  would not have stopped a crash loop. Redesigned to reset on *progress* (a new epoch
+  checkpoint), which also distinguishes a healthy 8-hour timeout-resume from an instant
+  crash. Caught only by the whole-branch review; all 256 tests passed with the bug in place.
+- **A live W&B API key was committed in four scripts** and is in git history at `7293b5d`
+  and `12b9869`, pushed to the public remote. Replaced with the `~/.netrc` pattern two
+  sibling scripts already used. Containment only — the key needs rotating at wandb.ai.
+- Three of the five checkpoints were being written by direct `torch.save` with no
+  provenance, which would have failed gate G6 only *after* two GPU stages had run.
+
+### Decision
+Wav2Vec frozen during pretraining; W&B offline. Both recorded in the spec.
+Part B (data restore and retraining on HPC) is unchanged and not yet started.
+
+### Artifacts
+- Plan: `docs/superpowers/plans/2026-09-09-clean-pipeline-rebuild.md`
+- Spec: `docs/superpowers/specs/2026-09-09-clean-pipeline-rebuild-design.md`
+- Branch: `rebuild/part-a`

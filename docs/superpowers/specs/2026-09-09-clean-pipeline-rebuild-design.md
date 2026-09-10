@@ -208,6 +208,23 @@ indicates speaker leakage across the train/val split.
   deliberate choice to keep the rebuild attributable; see sections 12 and 13.
 - Evaluation covers FakeAVCeleb, CelebDF-v2, and DFDC. DFDC is re-downloaded
   from Kaggle; see section 11.
+- **Wav2Vec is frozen during pretraining.** `configs/rebuild_pretrain.yaml` sets
+  `audio_encoder.freeze_pretrained: true`. The config was initially copied from
+  `default.yaml`, which leaves it unfrozen — the state section 7's G3 gate
+  defines as a failure (representation collapse, saturating sync-score). The
+  lost April recipe was named `pretrain_frozen.yaml`, so frozen is also the
+  better guess at what April actually ran. Decided by the project owner
+  2026-09-10.
+- **W&B runs offline.** All four training launchers export
+  `WANDB_MODE=offline`. `wandb.init()` is unguarded in all four training stages
+  (`src/training/pretrain.py:184`, `src/training/finetune.py:347`,
+  `scripts/train_audio_classifier.py:207`,
+  `scripts/train_cross_attention.py:198`), so an invalid account would crash
+  every stage at authentication and burn H200 queue cycles. No gate depends on
+  W&B: per-epoch metrics are written independently to
+  `outputs/logs/pretrain.json` and `outputs/logs/finetune.json`, which is what
+  G3 and G4 read. Offline runs still receive run IDs, so checkpoint provenance
+  stays populated, and `wandb sync` can upload retroactively.
 
 ## 10. Risks
 
