@@ -631,8 +631,8 @@ Expected: no output.
 - [ ] **Step 8: Run the full suite**
 
 Run: `python -m pytest tests/ -q`
-Expected: the 5 new tests pass, collected total rises to 243 (231 + 5 seeding + 7
-provenance), and the only failure is the known pre-existing `test_face_mask_shape`.
+Expected: the 5 new tests pass, collected total rises 243 -> 248, and the only
+failure is the known pre-existing `test_face_mask_shape`.
 
 - [ ] **Step 9: Commit**
 
@@ -718,8 +718,8 @@ Expected: 2 passed
 - [ ] **Step 5: Run the full suite**
 
 Run: `python -m pytest tests/ -q`
-Expected: the 2 new tests pass, collected total rises to 245, and the only failure
-is the known pre-existing `test_face_mask_shape`.
+Expected: the 2 new tests pass, collected total rises 248 -> 250, and the only
+failure is the known pre-existing `test_face_mask_shape`.
 
 - [ ] **Step 6: Commit**
 
@@ -960,8 +960,8 @@ Expected: `rebuild_pretrain.yaml` and `rebuild_finetune.yaml`, no `default.yaml`
 - [ ] **Step 7: Run the full suite**
 
 Run: `python -m pytest tests/ -q`
-Expected: the 6 new tests pass, collected total rises to 251, and the only failure
-is the known pre-existing `test_face_mask_shape`.
+Expected: the 6 new tests pass, collected total rises 250 -> 256, and the only
+failure is the known pre-existing `test_face_mask_shape`.
 
 - [ ] **Step 8: Commit — this is the gate before any HPC job**
 
