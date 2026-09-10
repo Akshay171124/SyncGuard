@@ -39,7 +39,7 @@ model:
     model_id: "facebook/wav2vec2-base-960h"
     layer: 9  # Subject to ablation (3, 5, 7, 9, 11)
     embedding_dim: 256
-    freeze_pretrained: false
+    freeze_pretrained: true
   classifier:
     name: "bilstm"  # Options: bilstm, cnn1d, statistical
     hidden_size: 128
