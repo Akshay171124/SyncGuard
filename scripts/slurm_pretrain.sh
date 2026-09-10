@@ -11,11 +11,19 @@
 #SBATCH --signal=B:USR1@120
 #SBATCH --requeue
 
+source scripts/lib/resubmit_guard.sh
+GUARD_NAME=syncguard_pretrain
+
 # Auto-resubmit on ANY termination signal (timeout, preemption, cancel)
 RESUBMITTED=0
 resubmit() {
     if [ $RESUBMITTED -eq 0 ]; then
         RESUBMITTED=1
+        if ! guard_may_resubmit "$GUARD_NAME" 3; then
+            echo "Refusing to resubmit — see outputs/logs/.resubmit_count_${GUARD_NAME}"
+            exit 1
+        fi
+        guard_record_failure "$GUARD_NAME"
         echo "Signal received — resubmitting... ($(date))"
         LATEST=$(ls -t outputs/checkpoints/pretrain_epoch_*.pt 2>/dev/null | head -1)
         if [ -n "$LATEST" ]; then
@@ -46,7 +54,7 @@ if [ -n "$RESUME_CKPT" ]; then
 fi
 
 python scripts/train_pretrain.py \
-    --config configs/default.yaml \
+    --config configs/rebuild_pretrain.yaml \
     $RESUME_ARG &
 
 CHILD_PID=$!
@@ -59,3 +67,5 @@ if [ $EXIT_CODE -ne 0 ] && [ $RESUBMITTED -eq 0 ]; then
     echo "Non-zero exit ($EXIT_CODE) — resubmitting as safety net..."
     resubmit
 fi
+
+if [ $? -eq 0 ]; then guard_reset "$GUARD_NAME"; fi

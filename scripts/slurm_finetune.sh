@@ -50,7 +50,7 @@ if [ -n "$RESUME_CKPT" ]; then
 fi
 
 python scripts/train_finetune.py \
-    --config configs/default.yaml \
+    --config configs/rebuild_finetune.yaml \
     --pretrain_ckpt "$PRETRAIN_CKPT" \
     $RESUME_ARG &
 
