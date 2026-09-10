@@ -27,7 +27,7 @@ echo "Stage 1: Training cross-attention head"
 echo "Base checkpoint: $FINETUNE_CKPT"
 
 python scripts/train_cross_attention.py \
-    --config configs/finetune_frozen.yaml \
+    --config configs/rebuild_finetune.yaml \
     --checkpoint "$FINETUNE_CKPT" \
     --stage 1
 
@@ -37,14 +37,14 @@ CA_STAGE1="${CA_STAGE1:-outputs/checkpoints/ca_stage1_best.pt}"
 echo "Stage 1 checkpoint: $CA_STAGE1"
 
 python scripts/train_cross_attention.py \
-    --config configs/finetune_frozen.yaml \
+    --config configs/rebuild_finetune.yaml \
     --checkpoint "$CA_STAGE1" \
     --stage 2
 
 echo ""
 echo "=== Evaluating ==="
 python scripts/evaluate.py \
-    --config configs/finetune_frozen.yaml \
+    --config configs/rebuild_finetune.yaml \
     --checkpoint outputs/checkpoints/ca_stage2_best.pt \
     --test_sets fakeavceleb dfdc
 

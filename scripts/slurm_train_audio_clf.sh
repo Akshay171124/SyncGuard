@@ -21,7 +21,7 @@ mkdir -p outputs/logs outputs/checkpoints
 echo "=== Audio Classifier Training ($(date)) ==="
 echo "GPU: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader)"
 
-python scripts/train_audio_classifier.py --config configs/default.yaml
+python scripts/train_audio_classifier.py --config configs/rebuild_finetune.yaml
 
 EXIT_CODE=$?
 echo "=== Finished with exit code $EXIT_CODE ($(date)) ==="

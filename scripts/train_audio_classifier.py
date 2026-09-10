@@ -23,6 +23,7 @@ import wandb
 
 from src.models.audio_classifier import build_standalone_audio_classifier
 from src.training.dataset import build_dataloaders, SyncGuardBatch
+from src.utils.checkpoint import save_checkpoint
 from src.utils.config import load_config, get_device
 from src.utils.seeding import seed_everything
 
@@ -295,26 +296,25 @@ def train(config: dict):
 
         # Save periodic checkpoint
         if (epoch + 1) % 5 == 0:
-            ckpt_path = checkpoint_dir / f"audio_clf_epoch_{epoch}.pt"
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "val_metrics": val_metrics,
-            }, ckpt_path)
-            logger.info(f"Checkpoint saved: {ckpt_path}")
+            save_checkpoint(
+                model, optimizer, scheduler, criterion,
+                epoch, val_metrics,
+                checkpoint_dir / f"audio_clf_epoch_{epoch}.pt",
+                config=config,
+                wandb_run_id=wandb.run.id if wandb.run else None,
+            )
 
         # Best checkpoint
         if val_metrics["val_auc"] > best_val_auc:
             best_val_auc = val_metrics["val_auc"]
             epochs_without_improvement = 0
-            ckpt_path = checkpoint_dir / "audio_clf_best.pt"
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "val_metrics": val_metrics,
-            }, ckpt_path)
+            save_checkpoint(
+                model, optimizer, scheduler, criterion,
+                epoch, val_metrics,
+                checkpoint_dir / "audio_clf_best.pt",
+                config=config,
+                wandb_run_id=wandb.run.id if wandb.run else None,
+            )
             logger.info(f"  New best val_auc: {best_val_auc:.4f}")
         else:
             epochs_without_improvement += 1
