@@ -1335,3 +1335,33 @@ errors are corrected in stage 8 of the rebuild.
 
 The `syncguard` conda env survived in `/home` (9.2 GB, torch 2.5.1+cu121), so
 the environment does not need rebuilding.
+
+## 2026-09-09 — Archive April Checkpoints (Survival After Scratch Purge)
+**Owner:** Akshay
+**Phase:** Infrastructure / Data Safety
+
+### What I Did
+Preserved the two surviving checkpoint artifacts from April development after an HPC scratch directory purge. These are irreplaceable — the original training configs are gone and the runs were unseeded.
+
+**Steps executed:**
+1. Verified both survivors are intact using zipfile validation (PDF/PyTorch zip structure check)
+2. Copied both files to `demo_assets/checkpoints/april_reference/` using `cp -n` (no-overwrite)
+3. Independently verified both copies pass zipfile integrity checks
+4. Recorded the archival in this notebook with timestamp
+
+### Results
+- **finetune_best.pt:** 738 ZIP entries, 523 MB, OK
+- **audio_clf_best.pt:** 239 ZIP entries, 365 MB, OK
+- Both copies verified and preserved in `demo_assets/checkpoints/april_reference/`
+
+### Observations
+- These checkpoints are critical artifacts: `finetune_best.pt` (April fine-tuning) and `audio_clf_best.pt` (audio classifier baseline)
+- HPC scratch auto-purge after 28 days was the threat; archiving locally + off-machine backup (Step 4) is the mitigation
+- Both files remain in original location for backward compatibility with demo dependencies
+
+### Decision
+- Checkpoints are safely preserved. Next step: complete off-machine backup (Google Drive / USB) — requires physical access or account the automation layer cannot provide
+
+### Artifacts
+- Preserved: `demo_assets/checkpoints/april_reference/finetune_best.pt`
+- Preserved: `demo_assets/checkpoints/april_reference/audio_clf_best.pt`
