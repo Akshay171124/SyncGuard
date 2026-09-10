@@ -1055,11 +1055,25 @@ python -c "from transformers import Wav2Vec2Model; Wav2Vec2Model.from_pretrained
 
 Expected: downloads about 360 MB, then exits silently.
 
-- [ ] **Step 5: Gate G0 — run the test suite**
+- [ ] **Step 5: Gate G0 — run the test suite ON A COMPUTE NODE**
+
+Do **not** run this on a login node. The suite loads torch and mediapipe and
+builds models; Explorer's login-node enforcement SIGKILLs it (observed
+`exit=137`). No GPU is needed — a CPU node on `short` is enough:
 
 ```bash
-python -m pytest tests/ -q
+export PYTHONPATH=/scratch/$USER/SyncGuard:$PYTHONPATH
+srun --partition=short --time=00:25:00 --mem=32G --cpus-per-task=4 \
+  python -m pytest tests/ -q
 ```
+
+Takes about 70 seconds once allocated.
+
+Note `pytest` must be installed in the env first. It is declared in
+`requirements.txt`, but install it alone rather than running
+`pip install -r requirements.txt` against the existing env: that file pins
+`torch>=2.0.0`, and a resolver upgrade could replace the working
+`2.5.1+cu121` build with a CPU-only wheel.
 
 Expected on HPC: all tests pass except the known pre-existing
 `test_face_mask_shape`. Do not assert an absolute count — the HPC environment
