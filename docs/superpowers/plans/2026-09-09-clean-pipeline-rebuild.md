@@ -26,6 +26,19 @@
 - Activate the environment with `source ~/.zshrc && conda activate syncguard`.
 - Current year is 2026.
 
+**Known test baseline (measured 2026-09-09, local macOS, system python3 / torch 2.9.0):**
+`python3 -m pytest tests/ -q` -> **231 collected, 230 passed, 1 failed, 0 skipped**.
+The single failure is `tests/test_augmentation.py::TestSBIHelpers::test_face_mask_shape`.
+It **passes in isolation** and fails only in a full-suite run, so it is order-dependent,
+pre-existing, and unrelated to this rebuild. It lives in SBI augmentation, which this
+rebuild does not use (CLIP+SBI is deferred, spec section 13). Do **not** fix it as part
+of any task here.
+
+The README's "215 passed, 4 skipped" is stale — it predates commits through 2026-06-11,
+and the 4 mediapipe EAR tests now run rather than skip. Gates below are therefore
+**relative**: count new tests added and require no NEW failures. Never assert an
+absolute total.
+
 ## File Structure
 
 **Create:**
@@ -231,7 +244,8 @@ Do not modify `scripts/train_cross_attention.py` — it already seeds at lines 1
 - [ ] **Step 6: Verify the full suite still passes**
 
 Run: `python -m pytest tests/ -q`
-Expected: 220 passed, 4 skipped (215 existing + 5 new)
+Expected: the 5 new tests pass, collected total rises 231 -> 236, and the only
+failure is the known pre-existing `test_face_mask_shape`. Any other failure blocks.
 
 - [ ] **Step 7: Commit**
 
@@ -592,7 +606,8 @@ Expected: no output.
 - [ ] **Step 8: Run the full suite**
 
 Run: `python -m pytest tests/ -q`
-Expected: 232 passed, 4 skipped
+Expected: the 5 new tests pass, collected total rises to 243 (231 + 5 seeding + 7
+provenance), and the only failure is the known pre-existing `test_face_mask_shape`.
 
 - [ ] **Step 9: Commit**
 
@@ -678,7 +693,8 @@ Expected: 2 passed
 - [ ] **Step 5: Run the full suite**
 
 Run: `python -m pytest tests/ -q`
-Expected: 234 passed, 4 skipped
+Expected: the 2 new tests pass, collected total rises to 245, and the only failure
+is the known pre-existing `test_face_mask_shape`.
 
 - [ ] **Step 6: Commit**
 
@@ -919,7 +935,8 @@ Expected: `rebuild_pretrain.yaml` and `rebuild_finetune.yaml`, no `default.yaml`
 - [ ] **Step 7: Run the full suite**
 
 Run: `python -m pytest tests/ -q`
-Expected: 240 passed, 4 skipped
+Expected: the 6 new tests pass, collected total rises to 251, and the only failure
+is the known pre-existing `test_face_mask_shape`.
 
 - [ ] **Step 8: Commit — this is the gate before any HPC job**
 
@@ -987,7 +1004,12 @@ Expected: downloads about 360 MB, then exits silently.
 python -m pytest tests/ -q
 ```
 
-Expected: **240 passed, 4 skipped**. The 4 skips are mediapipe EAR tests. If anything fails, stop and fix before proceeding — no GPU time should be spent on a broken checkout.
+Expected on HPC: all tests pass except the known pre-existing
+`test_face_mask_shape`. Do not assert an absolute count — the HPC environment
+(torch 2.5.1, mediapipe 0.10.33) differs from the machine the baseline was
+measured on, so collection totals may legitimately differ. What must hold: no
+failure other than `test_face_mask_shape`. If anything else fails, stop and fix
+before proceeding — no GPU time should be spent on a broken checkout.
 
 - [ ] **Step 6: Verify W&B credentials**
 
