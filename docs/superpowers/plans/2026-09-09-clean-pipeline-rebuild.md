@@ -64,7 +64,7 @@ absolute total.
 
 ### Task 1: Archive the surviving April checkpoints
 
-Safety-critical and first. Training writes to `outputs/checkpoints/finetune_best.pt` — the same filename one survivor holds. Any launch before this task destroys the only artifact tied to the April report.
+Do this first. Note that the original rationale given here was wrong: it claimed training would overwrite the survivors because both use the filename `finetune_best.pt`. It cannot — the survivors are at `demo_assets/checkpoints/` on the local Mac, and training writes to `/scratch/$USER/SyncGuard/outputs/checkpoints/` on the cluster. The real reason to do this first is simpler: these are 888 MB of single-copy, unreproducible artifacts on one laptop, and everything else in this plan is a reason to have a backup before you start changing things.
 
 **Files:**
 - Create: `demo_assets/checkpoints/april_reference/` (local, not committed — `*.pt` is gitignored)

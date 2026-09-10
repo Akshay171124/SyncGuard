@@ -114,11 +114,20 @@ roughly 3 GB, comfortably affordable. Datasets stay on scratch.
 `/projects/cvpr/` exists but belongs to another group (`dino.k`, group `cvpr`);
 this account is in `users` and `Forge` only, so it is unavailable.
 
-**Ordering constraint:** archive the two survivors under `april_reference/`
-*before* any training job launches. Training writes to
-`outputs/checkpoints/finetune_best.pt` by default — the same name the
-survivor holds — so an early launch would silently destroy the only copy of
-the April result.
+**Correction (2026-09-10):** an earlier revision of this section stated an
+ordering constraint here — that the survivors must be archived before any
+training job launches, because training writes to
+`outputs/checkpoints/finetune_best.pt`, "the same name the survivor holds".
+That reasoning was wrong. The survivors live at `demo_assets/checkpoints/` on
+the local Mac; training runs on Explorer and writes to
+`/scratch/$USER/SyncGuard/outputs/checkpoints/`
+(`scripts/slurm_finetune.sh:44-46`). Different machine, different directory —
+the rebuild cannot overwrite them, and no ordering constraint exists.
+
+The survivors still warrant an off-machine copy, for an ordinary reason rather
+than an ordering one: 888 MB, single copy, one laptop, and unreproducible
+because the config that produced them is gone. Copied to
+`gdrive:SyncGuard/april_reference/` on 2026-09-10.
 
 ## 5. Artifacts produced
 
