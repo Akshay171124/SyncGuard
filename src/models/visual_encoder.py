@@ -334,6 +334,14 @@ def build_visual_encoder(config: dict) -> nn.Module:
         ckpt = ve_cfg.get("checkpoint_path")
         if ckpt:
             encoder.load_av_hubert_weights(ckpt)
+        else:
+            logger.warning(
+                "AV-HuBERT selected with no 'checkpoint_path' — the encoder is "
+                "RANDOMLY INITIALIZED and uses none of AV-HuBERT's pretrained "
+                "lip-reading weights. This is intentional for the 2026-09-09 "
+                "rebuild baseline. Set model.visual_encoder.checkpoint_path to "
+                "load pretrained weights (requires fairseq)."
+            )
         return encoder
     elif name == "resnet18":
         return ResNet18VisualEncoder(

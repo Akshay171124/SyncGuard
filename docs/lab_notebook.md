@@ -1241,3 +1241,179 @@ Built a comprehensive pytest test suite covering all major components, and updat
 ---
 
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->
+
+## 2026-09-09 — Scratch Purge Assessment & Clean Rebuild Decision
+**Owner:** Akshay
+**Phase:** Recovery / Planning
+
+### What I Did
+Audited HPC and local storage after suspecting checkpoint loss, then planned a
+full pipeline rebuild.
+
+- Verified Explorer connectivity (`explorer-02`, both the SSH alias and the
+  explicit key path work).
+- Scanned `/home` exhaustively and `/scratch` for SyncGuard artifacts.
+- Searched the local Mac, git history, and GitHub for surviving checkpoints.
+- Wrote the rebuild design spec.
+
+### Results
+- `/scratch/prajapati.aksh` is **empty**. Directory mtime 2026-07-13, consistent
+  with the 28-day purge. The whole project lived there per `OPERATIONS.md`.
+- `/home` (59 GB) holds no SyncGuard artifacts — only the BraTS CA4 model and a
+  cached Silero VAD weight.
+- Surviving checkpoints, local Mac only, verified as intact zip archives with
+  clean CRCs: `finetune_best.pt` (548 MB), `audio_clf_best.pt` (383 MB).
+- Lost: `pretrain_best.pt`, `ca_stage1_best.pt`, `ca_stage2_best.pt`,
+  `finetune_best_run3_audioswap.pt`, all per-epoch checkpoints, all
+  preprocessed features.
+- **`configs/pretrain_frozen.yaml` and `configs/finetune_v4_best.yaml` were
+  never tracked in git.** The recipes behind the headline numbers existed only
+  on scratch and are unrecoverable from the repo.
+- Checkpoints were never committed or pushed: `.gitignore` excludes `*.pt`, and
+  no checkpoint appears anywhere in git history or LFS.
+- Drive retains the raw datasets: `lrs2_v1.tar` (49.93 GB),
+  `Celeb DF (v2).zip` (9.29 GB), `FakeAVCeleb_v1.2.zip` (5.96 GB), plus
+  AVSpeech.
+- **DFDC was never on Drive.** It came from Kaggle (Part 0, ~12 GB) to a local
+  machine and was rsynced to HPC, so its absence from the Drive listing is
+  expected rather than a second loss. Re-downloadable; full eval suite stays in
+  scope.
+
+### Observations
+- The CA4 assignment survived only because it ran from `/home`; SyncGuard was
+  deliberately placed in `/scratch` for throughput. Same account, opposite
+  outcome — an organizational difference, not a technical one.
+- Losing the configs compounds the checkpoint loss. April's artifacts cannot be
+  regenerated, only replaced by different ones with no lineage.
+- **Correction (found during Task 2 execution):** an earlier note in this entry
+  claimed pretrain and finetune were unseeded. They were not.
+  `src/training/pretrain.py:220` and `src/training/finetune.py:337` each had a
+  `# CB-5` block seeding python/numpy/torch from `config.get("seed", 42)`. The
+  original check only grepped `scripts/train_*.py` and missed `src/training/`.
+  The blocks were real but defective: both sit inside `train()`, which takes
+  `train_loader` as a parameter, so dataloaders were already built before
+  seeding ran, and neither set `PYTHONHASHSEED` or cuDNN determinism.
+- `/projects/cvpr/` exists but belongs to another group; this account is in
+  `users` and `Forge` only.
+- The `Forge` project had shared group storage, which is why its results had a
+  second home by default. SyncGuard had no group allocation, so scratch was the
+  only copy.
+
+### Decision
+Full clean rebuild rather than partial restoration. Exact numeric replication
+is explicitly not a goal — with the recipes gone and the runs unseeded,
+provenance is already broken, so a single coherent seeded baseline is worth
+more than a patchwork of untraceable artifacts.
+
+The two survivors are archived under `april_reference/`, not overwritten: they
+are the only artifacts tied to the April report, and training writes to the
+same default filename.
+
+### Artifacts
+- Design spec: `docs/superpowers/specs/2026-09-09-clean-pipeline-rebuild-design.md`
+
+### Note on DFDC sample counts
+1,334 is the pre-fix March preprocessing run; 1,343 is the corrected pipeline
+(fps fix, label fix, resolution normalization), which recovered nine
+previously-failing clips. 1,343 is the count behind the 0.5263 headline and the
+value the rebuild should assert. These are Part 0 *training* clips labeled from
+`metadata.json`, not DFDC's official test partition.
+
+### Addendum — AV-HuBERT was never pretrained-initialized
+Confirmed while scoping the rebuild. `src/models/visual_encoder.py:333` guards
+weight loading behind `if ckpt:`, where `ckpt = ve_cfg.get("checkpoint_path")`.
+No config defines that key, so `load_av_hubert_weights()` never ran.
+Independently, `fairseq>=0.12.0` is in `requirements.txt` but is not installed
+in the surviving `syncguard` env — a set path would have raised `ImportError`
+at `import fairseq`.
+
+With `freeze_pretrained: false`, every reported result came from the AV-HuBERT
+*architecture* with randomly initialized weights, contradicting
+`docs/EXECUTION_PLAN.md:143`. The failure was silent: `.get()` returning `None`
+into a truthiness check logs nothing.
+
+Implication: the DFDC near-chance result has a second candidate explanation
+beyond the architectural one. Loading real lip-reading weights is now the
+highest-ranked follow-up.
+
+Separately, the Wav2Lip adversarial set (~500 clips) documented in the proposal
+was never generated — no logs or results exist for it. Both documentation
+errors are corrected in stage 8 of the rebuild.
+
+The `syncguard` conda env survived in `/home` (9.2 GB, torch 2.5.1+cu121), so
+the environment does not need rebuilding.
+
+## 2026-09-09 — Archive April Checkpoints (Survival After Scratch Purge)
+**Owner:** Akshay
+**Phase:** Infrastructure / Data Safety
+
+### What I Did
+Preserved the two surviving checkpoint artifacts from April development after an HPC scratch directory purge. These are irreplaceable — the original training configs are gone and the runs were unseeded.
+
+**Steps executed:**
+1. Verified both survivors are intact using zipfile validation (PyTorch checkpoint zip structure check)
+2. Copied both files to `demo_assets/checkpoints/april_reference/` using `cp -n` (no-overwrite)
+3. Independently verified both copies pass zipfile integrity checks
+4. Recorded the archival in this notebook with timestamp
+
+### Results
+- **finetune_best.pt:** 738 ZIP entries, 523 MiB, OK
+- **audio_clf_best.pt:** 239 ZIP entries, 365 MiB, OK
+- Both copies verified and preserved in `demo_assets/checkpoints/april_reference/`
+
+### Observations
+- These checkpoints are critical artifacts: `finetune_best.pt` (April fine-tuning) and `audio_clf_best.pt` (audio classifier baseline)
+- HPC scratch auto-purge after 28 days was the threat; archiving locally + off-machine backup (Step 4) is the mitigation
+- Both files remain in original location for backward compatibility with demo dependencies
+
+### Decision
+- Checkpoints are safely preserved. Next step: complete off-machine backup (Google Drive / USB) — requires physical access or account the automation layer cannot provide
+
+### Artifacts
+- Preserved: `demo_assets/checkpoints/april_reference/finetune_best.pt`
+- Preserved: `demo_assets/checkpoints/april_reference/audio_clf_best.pt`
+
+## 2026-09-10 — Part A Hardening Complete
+**Owner:** Akshay
+**Phase:** Rebuild / Part A
+
+### What I Did
+Executed Part A of the rebuild plan: six tasks hardening the codebase before any
+GPU job runs. Branch `rebuild/part-a`, 22 commits.
+
+- Deterministic seeding (`src/utils/seeding.py`), wired into all training entry points.
+- Checkpoint provenance metadata (`src/utils/provenance.py`), embedded in every checkpoint.
+- One shared checkpoint saver (`src/utils/checkpoint.py`) replacing two duplicates, with
+  `config` a required argument so no stage can save an untraceable checkpoint.
+- A loud warning when AV-HuBERT is built without pretrained weights.
+- A persistent crash-loop guard for SLURM auto-resubmit (`scripts/lib/resubmit_guard.sh`).
+- Committed rebuild configs, wired into the launchers.
+
+### Results
+- 263 tests passing (baseline was 231, and the README's claimed 215 was stale).
+- All five pipeline checkpoints now route through the shared saver.
+- Checkpoints auto-archive to `$HOME/ckpt_archive` on success in both launchers.
+
+### Observations
+- **The crash-loop guard was initially broken in a way a passing test suite could not
+  see.** The plan specified `if [ $? -eq 0 ]; then guard_reset ...; fi` at the end of the
+  job script. In bash a skipped `if` body returns 0, so `$?` read the *preceding block's*
+  status, not the training result — meaning the counter reset immediately after every
+  increment, in the same job, and could never accumulate across submissions. The guard
+  would not have stopped a crash loop. Redesigned to reset on *progress* (a new epoch
+  checkpoint), which also distinguishes a healthy 8-hour timeout-resume from an instant
+  crash. Caught only by the whole-branch review; all 256 tests passed with the bug in place.
+- **A live W&B API key was committed in four scripts** and is in git history at `7293b5d`
+  and `12b9869`, pushed to the public remote. Replaced with the `~/.netrc` pattern two
+  sibling scripts already used. Containment only — the key needs rotating at wandb.ai.
+- Three of the five checkpoints were being written by direct `torch.save` with no
+  provenance, which would have failed gate G6 only *after* two GPU stages had run.
+
+### Decision
+Wav2Vec frozen during pretraining; W&B offline. Both recorded in the spec.
+Part B (data restore and retraining on HPC) is unchanged and not yet started.
+
+### Artifacts
+- Plan: `docs/superpowers/plans/2026-09-09-clean-pipeline-rebuild.md`
+- Spec: `docs/superpowers/specs/2026-09-09-clean-pipeline-rebuild-design.md`
+- Branch: `rebuild/part-a`

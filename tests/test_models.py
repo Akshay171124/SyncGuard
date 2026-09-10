@@ -401,3 +401,27 @@ class TestDCTFeatureExtractor:
         x = torch.randn(1, 3, 1, 96, 96)
         out = ext(x)
         assert out.shape == (1, 3, 16)
+
+
+def test_av_hubert_warns_without_checkpoint_path(caplog):
+    """Silent random init is what hid the missing weights for a whole project."""
+    from src.models.visual_encoder import build_visual_encoder
+
+    config = {"model": {"visual_encoder": {
+        "name": "av_hubert", "embedding_dim": 256, "freeze_pretrained": False}}}
+    with caplog.at_level("WARNING"):
+        encoder = build_visual_encoder(config)
+    assert encoder is not None
+    assert any("randomly initialized" in r.message.lower()
+               for r in caplog.records)
+
+
+def test_resnet18_does_not_warn(caplog):
+    from src.models.visual_encoder import build_visual_encoder
+
+    config = {"model": {"visual_encoder": {
+        "name": "resnet18", "embedding_dim": 256, "freeze_pretrained": False}}}
+    with caplog.at_level("WARNING"):
+        build_visual_encoder(config)
+    assert not any("randomly initialized" in r.message.lower()
+                   for r in caplog.records)

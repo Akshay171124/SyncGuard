@@ -13,6 +13,8 @@ module load miniconda3/24.11.1 FFmpeg/7.1.1
 eval "$(conda shell.bash hook)" && conda activate syncguard
 export HF_HOME=/scratch/$USER/.cache/huggingface
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Offline mode: log to a local wandb/ dir, no account or network auth needed. `wandb sync` later.
+export WANDB_MODE=offline
 
 cd /scratch/$USER/SyncGuard
 export PYTHONPATH=/scratch/$USER/SyncGuard:$PYTHONPATH
@@ -27,7 +29,7 @@ echo "Stage 1: Training cross-attention head"
 echo "Base checkpoint: $FINETUNE_CKPT"
 
 python scripts/train_cross_attention.py \
-    --config configs/finetune_frozen.yaml \
+    --config configs/rebuild_finetune.yaml \
     --checkpoint "$FINETUNE_CKPT" \
     --stage 1
 
@@ -37,14 +39,14 @@ CA_STAGE1="${CA_STAGE1:-outputs/checkpoints/ca_stage1_best.pt}"
 echo "Stage 1 checkpoint: $CA_STAGE1"
 
 python scripts/train_cross_attention.py \
-    --config configs/finetune_frozen.yaml \
+    --config configs/rebuild_finetune.yaml \
     --checkpoint "$CA_STAGE1" \
     --stage 2
 
 echo ""
 echo "=== Evaluating ==="
 python scripts/evaluate.py \
-    --config configs/finetune_frozen.yaml \
+    --config configs/rebuild_finetune.yaml \
     --checkpoint outputs/checkpoints/ca_stage2_best.pt \
     --test_sets fakeavceleb dfdc
 

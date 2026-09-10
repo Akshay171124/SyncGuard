@@ -11,11 +11,19 @@
 #SBATCH --signal=B:USR1@120
 #SBATCH --requeue
 
+source scripts/lib/resubmit_guard.sh
+GUARD_NAME=syncguard_pretrain
+
 # Auto-resubmit on ANY termination signal (timeout, preemption, cancel)
 RESUBMITTED=0
 resubmit() {
     if [ $RESUBMITTED -eq 0 ]; then
         RESUBMITTED=1
+        if ! guard_may_resubmit "$GUARD_NAME" 3; then
+            echo "Refusing to resubmit — see outputs/logs/.resubmit_count_${GUARD_NAME}"
+            exit 1
+        fi
+        guard_record_failure "$GUARD_NAME"
         echo "Signal received — resubmitting... ($(date))"
         LATEST=$(ls -t outputs/checkpoints/pretrain_epoch_*.pt 2>/dev/null | head -1)
         if [ -n "$LATEST" ]; then
@@ -30,10 +38,17 @@ trap resubmit USR1 TERM INT HUP XCPU
 module load miniconda3/24.11.1 FFmpeg/7.1.1
 eval "$(conda shell.bash hook)" && conda activate syncguard
 export HF_HOME=/scratch/$USER/.cache/huggingface
+# Offline mode: log to a local wandb/ dir, no account or network auth needed. `wandb sync` later.
+export WANDB_MODE=offline
 
 cd /scratch/$USER/SyncGuard
 export PYTHONPATH=/scratch/$USER/SyncGuard:$PYTHONPATH
 mkdir -p outputs/logs outputs/checkpoints
+
+# Reset the crash-loop counter if this job sees a newer checkpoint than the
+# last job did — that's real progress, not a resubmit fired from a crash loop.
+MARKER=$(ls -t outputs/checkpoints/pretrain_epoch_*.pt 2>/dev/null | head -1)
+guard_note_progress "$GUARD_NAME" "${MARKER:-none}"
 
 echo "=== Phase 1: Contrastive Pretraining on H200 ($(date)) ==="
 echo "Datasets: AVSpeech + LRS2"
@@ -46,7 +61,7 @@ if [ -n "$RESUME_CKPT" ]; then
 fi
 
 python scripts/train_pretrain.py \
-    --config configs/default.yaml \
+    --config configs/rebuild_pretrain.yaml \
     $RESUME_ARG &
 
 CHILD_PID=$!
@@ -58,4 +73,10 @@ echo "=== Finished with exit code $EXIT_CODE ($(date)) ==="
 if [ $EXIT_CODE -ne 0 ] && [ $RESUBMITTED -eq 0 ]; then
     echo "Non-zero exit ($EXIT_CODE) — resubmitting as safety net..."
     resubmit
+fi
+
+if [ $EXIT_CODE -eq 0 ]; then
+    guard_reset "$GUARD_NAME"
+    mkdir -p "$HOME/ckpt_archive"
+    cp -v outputs/checkpoints/*_best.pt "$HOME/ckpt_archive/" 2>/dev/null || true
 fi

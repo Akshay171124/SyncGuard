@@ -17,7 +17,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import random
 import time
 from pathlib import Path
@@ -36,6 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.models.syncguard import build_syncguard
 from src.training.dataset import SyncGuardBatch, build_dataloaders
+from src.utils.checkpoint import save_checkpoint
 from src.utils.config import load_config, get_device
 
 logger = logging.getLogger(__name__)
@@ -282,30 +282,26 @@ def train(config, checkpoint_path, stage, resume_from=None):
             best_val_auc = val_metrics["val_auc"]
             epochs_without_improvement = 0
             save_path = checkpoint_dir / f"{prefix}_best.pt"
-            tmp_path = save_path.with_suffix(".pt.tmp")
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "val_metrics": val_metrics,
-                "stage": stage,
-            }, tmp_path)
-            os.replace(str(tmp_path), str(save_path))
+            save_checkpoint(
+                model, optimizer, scheduler, criterion,
+                epoch, val_metrics,
+                save_path,
+                config=config,
+                wandb_run_id=wandb.run.id if wandb.run else None,
+            )
             logger.info(f"  New best val_auc: {best_val_auc:.4f} → {save_path}")
         else:
             epochs_without_improvement += 1
 
         if (epoch + 1) % 5 == 0:
             save_path = checkpoint_dir / f"{prefix}_epoch_{epoch}.pt"
-            tmp_path = save_path.with_suffix(".pt.tmp")
-            torch.save({
-                "epoch": epoch,
-                "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "val_metrics": val_metrics,
-                "stage": stage,
-            }, tmp_path)
-            os.replace(str(tmp_path), str(save_path))
+            save_checkpoint(
+                model, optimizer, scheduler, criterion,
+                epoch, val_metrics,
+                save_path,
+                config=config,
+                wandb_run_id=wandb.run.id if wandb.run else None,
+            )
 
         # Save history
         with open(log_dir / f"{prefix}.json", "w") as f:
