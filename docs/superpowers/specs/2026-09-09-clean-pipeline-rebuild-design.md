@@ -27,11 +27,23 @@ with clean CRCs on 2026-09-09:
 - `demo_assets/checkpoints/finetune_best.pt` (548 MB)
 - `demo_assets/checkpoints/audio_clf_best.pt` (383 MB)
 
-Two compounding irregularities make partial restoration unattractive. The
-configs that produced the April results are gone, and the pretrain and
-finetune runs were unseeded — only `scripts/train_cross_attention.py` sets
-seeds. April's artifacts therefore cannot be regenerated, only replaced by
-different ones with no documented lineage.
+Two compounding irregularities make partial restoration unattractive.
+
+First, the configs that produced the April results are gone.
+
+Second, seeding was incomplete. Correcting an earlier assessment in this
+document's drafting: pretrain and finetune were **not** unseeded.
+`src/training/pretrain.py:220` and `src/training/finetune.py:337` each carried
+a `# CB-5` block seeding python, numpy, and torch from `config.get("seed", 42)`.
+But both blocks sit inside `train()`, which receives `train_loader` as an
+argument — so the dataloaders, and their shuffle and worker RNG state, were
+already constructed before any seed was set. Neither block set
+`PYTHONHASHSEED` or cuDNN determinism. The runs were partially and belatedly
+seeded, not reproducible.
+
+Either way the conclusion holds: with the configs gone, April's artifacts
+cannot be regenerated, only replaced by different ones with no documented
+lineage.
 
 **Decision:** full clean rebuild. Exact numeric replication is explicitly not
 a goal.
@@ -64,7 +76,7 @@ attributable.
 | Irregularity | Fix |
 |---|---|
 | April configs never git-tracked | All configs committed before any run launches |
-| Only cross-attention training seeds | Seeding in every training entry point; `seed` key in every config |
+| Seeding ran after dataloader construction and omitted `PYTHONHASHSEED` and cuDNN determinism | One `seed_everything()` called before any model or dataloader is built; `seed` key in every config |
 | No link from checkpoint to recipe | Provenance block embedded in each checkpoint state dict |
 | Checkpoints lived only on scratch | Auto-archive to `/home/prajapati.aksh/ckpt_archive/` at run end |
 | Auto-resubmit burned 40 failed jobs (2026-04-07) | Resubmit loop checks exit status, aborts after 3 consecutive identical failures |
@@ -188,7 +200,8 @@ indicates speaker leakage across the train/val split.
 
 - Configs are authored fresh. The originals are unrecoverable, so this rebuild
   defines a new documented baseline rather than claiming continuity.
-- All runs seeded; April's pretrain and finetune were not.
+- Seeding is complete and correctly ordered. April seeded partially and after
+  dataloader construction (see section 1).
 - Pretraining corpus is AVSpeech plus LRS2, both confirmed present on Drive.
 - The AV-HuBERT visual encoder remains randomly initialized, matching what
   April actually ran rather than what its documentation claimed. This is a

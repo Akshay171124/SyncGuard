@@ -1283,9 +1283,16 @@ full pipeline rebuild.
 - The CA4 assignment survived only because it ran from `/home`; SyncGuard was
   deliberately placed in `/scratch` for throughput. Same account, opposite
   outcome — an organizational difference, not a technical one.
-- Losing the configs compounds the checkpoint loss. Pretrain and finetune were
-  unseeded (only `train_cross_attention.py` seeds), so April's artifacts cannot
-  be regenerated, only replaced by different ones with no lineage.
+- Losing the configs compounds the checkpoint loss. April's artifacts cannot be
+  regenerated, only replaced by different ones with no lineage.
+- **Correction (found during Task 2 execution):** an earlier note in this entry
+  claimed pretrain and finetune were unseeded. They were not.
+  `src/training/pretrain.py:220` and `src/training/finetune.py:337` each had a
+  `# CB-5` block seeding python/numpy/torch from `config.get("seed", 42)`. The
+  original check only grepped `scripts/train_*.py` and missed `src/training/`.
+  The blocks were real but defective: both sit inside `train()`, which takes
+  `train_loader` as a parameter, so dataloaders were already built before
+  seeding ran, and neither set `PYTHONHASHSEED` or cuDNN determinism.
 - `/projects/cvpr/` exists but belongs to another group; this account is in
   `users` and `Forge` only.
 - The `Forge` project had shared group storage, which is why its results had a
