@@ -13,11 +13,9 @@ import argparse
 import json
 import logging
 import os
-import random
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
@@ -29,6 +27,7 @@ from src.models.syncguard import SyncGuard, build_syncguard
 from src.training.losses import CombinedLoss, build_finetune_loss
 from src.training.dataset import SyncGuardBatch
 from src.utils.config import load_config, get_device
+from src.utils.seeding import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -334,15 +333,6 @@ def train(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
-    # CB-5: Set random seeds for reproducibility
-    seed = config.get("seed", 42)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    logger.info(f"Random seed set to {seed}")
-
     # Build model and load pretrained weights
     model = build_syncguard(config).to(device)
 
@@ -598,6 +588,9 @@ def main():
     )
 
     config = load_config(args.config)
+
+    seed = seed_everything(config.get("seed", 42))
+    logger.info(f"Seeded all RNGs with seed={seed}")
 
     from src.training.dataset import build_dataloaders
 

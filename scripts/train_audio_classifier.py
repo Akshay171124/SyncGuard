@@ -24,6 +24,7 @@ import wandb
 from src.models.audio_classifier import build_standalone_audio_classifier
 from src.training.dataset import build_dataloaders, SyncGuardBatch
 from src.utils.config import load_config, get_device
+from src.utils.seeding import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +345,10 @@ def main():
     )
 
     config = load_config(args.config)
+
+    seed = seed_everything(config.get("seed", 42))
+    logger.info(f"Seeded all RNGs with seed={seed}")
+
     train(config)
 
 

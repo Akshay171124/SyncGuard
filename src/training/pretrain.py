@@ -11,11 +11,9 @@ import argparse
 import json
 import logging
 import os
-import random
 import time
 from pathlib import Path
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -28,6 +26,7 @@ from src.models.syncguard import SyncGuard, build_syncguard
 from src.training.losses import PretrainLoss, build_pretrain_loss
 from src.training.dataset import SyncGuardDataset, collate_syncguard, SyncGuardBatch
 from src.utils.config import load_config, get_device
+from src.utils.seeding import seed_everything
 
 logger = logging.getLogger(__name__)
 
@@ -216,15 +215,6 @@ def train(
     log_path = Path("outputs/logs/pretrain.json")
     log_path.parent.mkdir(parents=True, exist_ok=True)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-    # CB-5: Set random seeds for reproducibility
-    seed = config.get("seed", 42)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    logger.info(f"Random seed set to {seed}")
 
     # Initialize wandb
     use_cmp = pt_cfg.get("cross_modal_prediction", True)
@@ -463,6 +453,9 @@ def main():
     )
 
     config = load_config(args.config)
+
+    seed = seed_everything(config.get("seed", 42))
+    logger.info(f"Seeded all RNGs with seed={seed}")
 
     # Build dataloaders
     from src.training.dataset import build_dataloaders
