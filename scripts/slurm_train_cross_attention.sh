@@ -13,6 +13,8 @@ module load miniconda3/24.11.1 FFmpeg/7.1.1
 eval "$(conda shell.bash hook)" && conda activate syncguard
 export HF_HOME=/scratch/$USER/.cache/huggingface
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Offline mode: log to a local wandb/ dir, no account or network auth needed. `wandb sync` later.
+export WANDB_MODE=offline
 
 cd /scratch/$USER/SyncGuard
 export PYTHONPATH=/scratch/$USER/SyncGuard:$PYTHONPATH
