@@ -43,6 +43,11 @@ cd /scratch/$USER/SyncGuard
 export PYTHONPATH=/scratch/$USER/SyncGuard:$PYTHONPATH
 mkdir -p outputs/logs outputs/checkpoints
 
+# Reset the crash-loop counter if this job sees a newer checkpoint than the
+# last job did — that's real progress, not a resubmit fired from a crash loop.
+MARKER=$(ls -t outputs/checkpoints/pretrain_epoch_*.pt 2>/dev/null | head -1)
+guard_note_progress "$GUARD_NAME" "${MARKER:-none}"
+
 echo "=== Phase 1: Contrastive Pretraining on H200 ($(date)) ==="
 echo "Datasets: AVSpeech + LRS2"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
@@ -68,4 +73,4 @@ if [ $EXIT_CODE -ne 0 ] && [ $RESUBMITTED -eq 0 ]; then
     resubmit
 fi
 
-if [ $? -eq 0 ]; then guard_reset "$GUARD_NAME"; fi
+if [ $EXIT_CODE -eq 0 ]; then guard_reset "$GUARD_NAME"; fi

@@ -42,3 +42,20 @@ guard_may_resubmit() {
     fi
     return 0
 }
+
+# guard_note_progress <name> <marker>
+# Reset the failure counter when the progress marker has changed since the
+# last job. A crash-loop produces no new checkpoint, so its marker is
+# unchanged and the counter keeps climbing; a healthy resume produces a new
+# checkpoint, so the counter clears and a long multi-job run is never throttled.
+guard_note_progress() {
+    local f marker stored
+    f="$(_guard_file "$1")_marker"
+    marker="$2"
+    stored=""
+    [ -f "$f" ] && stored="$(cat "$f")"
+    if [ "$marker" != "$stored" ]; then
+        echo "$marker" > "$f"
+        guard_reset "$1"
+    fi
+}
