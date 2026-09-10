@@ -73,4 +73,8 @@ if [ $EXIT_CODE -ne 0 ] && [ $RESUBMITTED -eq 0 ]; then
     resubmit
 fi
 
-if [ $EXIT_CODE -eq 0 ]; then guard_reset "$GUARD_NAME"; fi
+if [ $EXIT_CODE -eq 0 ]; then
+    guard_reset "$GUARD_NAME"
+    mkdir -p "$HOME/ckpt_archive"
+    cp -v outputs/checkpoints/*_best.pt "$HOME/ckpt_archive/" 2>/dev/null || true
+fi
