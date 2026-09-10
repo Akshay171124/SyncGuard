@@ -809,7 +809,6 @@ Expected: FAIL — the sourced file does not exist, so every case errors
 - [ ] **Step 3: Implement the guard**
 
 ```bash
-# scripts/lib/resubmit_guard.sh
 # Consecutive-failure guard for SLURM auto-resubmit loops.
 #
 # On 2026-04-07 a resubmit trap produced ~40 identical failing jobs because
@@ -854,6 +853,23 @@ guard_may_resubmit() {
     fi
     return 0
 }
+
+# guard_note_progress <name> <marker>
+# Reset the failure counter when the progress marker has changed since the
+# last job. A crash-loop produces no new checkpoint, so its marker is
+# unchanged and the counter keeps climbing; a healthy resume produces a new
+# checkpoint, so the counter clears and a long multi-job run is never throttled.
+guard_note_progress() {
+    local f marker stored
+    f="$(_guard_file "$1")_marker"
+    marker="$2"
+    stored=""
+    [ -f "$f" ] && stored="$(cat "$f")"
+    if [ "$marker" != "$stored" ]; then
+        echo "$marker" > "$f"
+        guard_reset "$1"
+    fi
+}
 ```
 
 - [ ] **Step 4: Run to verify pass**
@@ -892,11 +908,27 @@ resubmit() {
 }
 ```
 
-Then, at the very end of the script, after the training command exits successfully, add:
+Then add the progress check AFTER the `cd` into the project directory and BEFORE
+training starts (the guard uses relative paths, so it must run post-`cd`):
 
 ```bash
-if [ $? -eq 0 ]; then guard_reset "$GUARD_NAME"; fi
+MARKER=$(ls -t outputs/checkpoints/pretrain_epoch_*.pt 2>/dev/null | head -1)
+guard_note_progress "$GUARD_NAME" "${MARKER:-none}"
 ```
+
+And at the very end of the script, reset on genuine success using the captured
+exit code — **not** `$?`, which at that point holds the exit status of the
+preceding `if` block rather than the training command:
+
+```bash
+if [ $EXIT_CODE -eq 0 ]; then guard_reset "$GUARD_NAME"; fi
+```
+
+The progress marker is what distinguishes the two cases a bare exit-code check
+conflates. A crash-loop writes no new epoch checkpoint, so its marker is
+unchanged and the counter climbs to the limit. A healthy timeout-resume writes
+new checkpoints, so the marker changes, the counter clears, and a long
+multi-job run is never throttled.
 
 - [ ] **Step 6: Author the rebuild configs**
 
