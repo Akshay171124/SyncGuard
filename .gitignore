@@ -46,3 +46,6 @@ wandb/
 
 # OS
 Thumbs.db
+
+# Subagent-driven-development scratch
+.superpowers/

@@ -1241,3 +1241,97 @@ Built a comprehensive pytest test suite covering all major components, and updat
 ---
 
 <!-- ADD NEW ENTRIES BELOW THIS LINE -->
+
+## 2026-09-09 — Scratch Purge Assessment & Clean Rebuild Decision
+**Owner:** Akshay
+**Phase:** Recovery / Planning
+
+### What I Did
+Audited HPC and local storage after suspecting checkpoint loss, then planned a
+full pipeline rebuild.
+
+- Verified Explorer connectivity (`explorer-02`, both the SSH alias and the
+  explicit key path work).
+- Scanned `/home` exhaustively and `/scratch` for SyncGuard artifacts.
+- Searched the local Mac, git history, and GitHub for surviving checkpoints.
+- Wrote the rebuild design spec.
+
+### Results
+- `/scratch/prajapati.aksh` is **empty**. Directory mtime 2026-07-13, consistent
+  with the 28-day purge. The whole project lived there per `OPERATIONS.md`.
+- `/home` (59 GB) holds no SyncGuard artifacts — only the BraTS CA4 model and a
+  cached Silero VAD weight.
+- Surviving checkpoints, local Mac only, verified as intact zip archives with
+  clean CRCs: `finetune_best.pt` (548 MB), `audio_clf_best.pt` (383 MB).
+- Lost: `pretrain_best.pt`, `ca_stage1_best.pt`, `ca_stage2_best.pt`,
+  `finetune_best_run3_audioswap.pt`, all per-epoch checkpoints, all
+  preprocessed features.
+- **`configs/pretrain_frozen.yaml` and `configs/finetune_v4_best.yaml` were
+  never tracked in git.** The recipes behind the headline numbers existed only
+  on scratch and are unrecoverable from the repo.
+- Checkpoints were never committed or pushed: `.gitignore` excludes `*.pt`, and
+  no checkpoint appears anywhere in git history or LFS.
+- Drive retains the raw datasets: `lrs2_v1.tar` (49.93 GB),
+  `Celeb DF (v2).zip` (9.29 GB), `FakeAVCeleb_v1.2.zip` (5.96 GB), plus
+  AVSpeech.
+- **DFDC was never on Drive.** It came from Kaggle (Part 0, ~12 GB) to a local
+  machine and was rsynced to HPC, so its absence from the Drive listing is
+  expected rather than a second loss. Re-downloadable; full eval suite stays in
+  scope.
+
+### Observations
+- The CA4 assignment survived only because it ran from `/home`; SyncGuard was
+  deliberately placed in `/scratch` for throughput. Same account, opposite
+  outcome — an organizational difference, not a technical one.
+- Losing the configs compounds the checkpoint loss. Pretrain and finetune were
+  unseeded (only `train_cross_attention.py` seeds), so April's artifacts cannot
+  be regenerated, only replaced by different ones with no lineage.
+- `/projects/cvpr/` exists but belongs to another group; this account is in
+  `users` and `Forge` only.
+- The `Forge` project had shared group storage, which is why its results had a
+  second home by default. SyncGuard had no group allocation, so scratch was the
+  only copy.
+
+### Decision
+Full clean rebuild rather than partial restoration. Exact numeric replication
+is explicitly not a goal — with the recipes gone and the runs unseeded,
+provenance is already broken, so a single coherent seeded baseline is worth
+more than a patchwork of untraceable artifacts.
+
+The two survivors are archived under `april_reference/`, not overwritten: they
+are the only artifacts tied to the April report, and training writes to the
+same default filename.
+
+### Artifacts
+- Design spec: `docs/superpowers/specs/2026-09-09-clean-pipeline-rebuild-design.md`
+
+### Note on DFDC sample counts
+1,334 is the pre-fix March preprocessing run; 1,343 is the corrected pipeline
+(fps fix, label fix, resolution normalization), which recovered nine
+previously-failing clips. 1,343 is the count behind the 0.5263 headline and the
+value the rebuild should assert. These are Part 0 *training* clips labeled from
+`metadata.json`, not DFDC's official test partition.
+
+### Addendum — AV-HuBERT was never pretrained-initialized
+Confirmed while scoping the rebuild. `src/models/visual_encoder.py:333` guards
+weight loading behind `if ckpt:`, where `ckpt = ve_cfg.get("checkpoint_path")`.
+No config defines that key, so `load_av_hubert_weights()` never ran.
+Independently, `fairseq>=0.12.0` is in `requirements.txt` but is not installed
+in the surviving `syncguard` env — a set path would have raised `ImportError`
+at `import fairseq`.
+
+With `freeze_pretrained: false`, every reported result came from the AV-HuBERT
+*architecture* with randomly initialized weights, contradicting
+`docs/EXECUTION_PLAN.md:143`. The failure was silent: `.get()` returning `None`
+into a truthiness check logs nothing.
+
+Implication: the DFDC near-chance result has a second candidate explanation
+beyond the architectural one. Loading real lip-reading weights is now the
+highest-ranked follow-up.
+
+Separately, the Wav2Lip adversarial set (~500 clips) documented in the proposal
+was never generated — no logs or results exist for it. Both documentation
+errors are corrected in stage 8 of the rebuild.
+
+The `syncguard` conda env survived in `/home` (9.2 GB, torch 2.5.1+cu121), so
+the environment does not need rebuilding.
