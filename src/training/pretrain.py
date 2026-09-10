@@ -10,7 +10,6 @@ Usage:
 import argparse
 import json
 import logging
-import os
 import time
 from pathlib import Path
 
@@ -25,6 +24,7 @@ import wandb
 from src.models.syncguard import SyncGuard, build_syncguard
 from src.training.losses import PretrainLoss, build_pretrain_loss
 from src.training.dataset import SyncGuardDataset, collate_syncguard, SyncGuardBatch
+from src.utils.checkpoint import save_checkpoint
 from src.utils.config import load_config, get_device
 from src.utils.seeding import seed_everything
 
@@ -155,43 +155,6 @@ def validate(
         "avg_sync_score": total_sync_score / n_batches,
         "temperature": criterion.temperature.item(),
     }
-
-
-def save_checkpoint(
-    model: SyncGuard,
-    optimizer: AdamW,
-    scheduler,
-    criterion: PretrainLoss,
-    epoch: int,
-    val_metrics: dict,
-    path: Path,
-):
-    """Save training checkpoint.
-
-    Args:
-        model: SyncGuard model.
-        optimizer: Optimizer state.
-        scheduler: LR scheduler state.
-        criterion: Loss function state (includes MoCo queue + temperature).
-        epoch: Current epoch.
-        val_metrics: Validation metrics dict.
-        path: Save path.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".pt.tmp")
-    torch.save(
-        {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
-            "criterion_state_dict": criterion.state_dict(),
-            "val_metrics": val_metrics,
-        },
-        tmp_path,
-    )
-    os.replace(str(tmp_path), str(path))  # Atomic on POSIX
-    logger.info(f"Checkpoint saved: {path}")
 
 
 def train(
@@ -418,6 +381,8 @@ def train(
                 model, optimizer, scheduler, criterion,
                 epoch, val_metrics,
                 checkpoint_dir / f"pretrain_epoch_{epoch}.pt",
+                config=config,
+                wandb_run_id=wandb.run.id if wandb.run else None,
             )
 
         # Save best checkpoint
@@ -427,6 +392,8 @@ def train(
                 model, optimizer, scheduler, criterion,
                 epoch, val_metrics,
                 checkpoint_dir / "pretrain_best.pt",
+                config=config,
+                wandb_run_id=wandb.run.id if wandb.run else None,
             )
             logger.info(f"  New best val_loss: {best_val_loss:.4f}")
 
