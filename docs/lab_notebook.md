@@ -1344,14 +1344,14 @@ the environment does not need rebuilding.
 Preserved the two surviving checkpoint artifacts from April development after an HPC scratch directory purge. These are irreplaceable — the original training configs are gone and the runs were unseeded.
 
 **Steps executed:**
-1. Verified both survivors are intact using zipfile validation (PDF/PyTorch zip structure check)
+1. Verified both survivors are intact using zipfile validation (PyTorch checkpoint zip structure check)
 2. Copied both files to `demo_assets/checkpoints/april_reference/` using `cp -n` (no-overwrite)
 3. Independently verified both copies pass zipfile integrity checks
 4. Recorded the archival in this notebook with timestamp
 
 ### Results
-- **finetune_best.pt:** 738 ZIP entries, 523 MB, OK
-- **audio_clf_best.pt:** 239 ZIP entries, 365 MB, OK
+- **finetune_best.pt:** 738 ZIP entries, 523 MiB, OK
+- **audio_clf_best.pt:** 239 ZIP entries, 365 MiB, OK
 - Both copies verified and preserved in `demo_assets/checkpoints/april_reference/`
 
 ### Observations
