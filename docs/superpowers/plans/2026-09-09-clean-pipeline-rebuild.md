@@ -1122,25 +1122,40 @@ unzip -q "Celeb DF (v2).zip"  -d celebdf
 tar  -xf lrs2_v1.tar          -C .
 ```
 
-- [ ] **Step 3: Pin protobuf BEFORE installing the Kaggle CLI**
+- [ ] **Step 3: Install the Kaggle CLI, then verify protobuf and mediapipe**
 
-This ordering is not optional. The Kaggle CLI pulls protobuf 7.x, which breaks mediapipe and cost a debugging cycle in March (`CHANGELOG.md:202`).
+**Do NOT pin `protobuf<5`.** `CHANGELOG.md:202` records that advice from March
+and it is now stale and actively harmful — verified 2026-09-10 by breaking the
+environment with it. The env has since been upgraded: it holds
+`tensorflow 2.21.0` (which requires `protobuf>=6.31.1`) and
+`mediapipe 0.10.33` (which needs protobuf 6.x's `runtime_version`). Installing
+`protobuf<5` resolves to 4.25.9 and mediapipe then fails with
+`ImportError: cannot import name 'runtime_version' from 'google.protobuf'`,
+which would break preprocessing in Stage 2.
 
-```bash
-grep -q "protobuf" requirements.txt || echo "protobuf<5" >> requirements.txt
-pip install -r requirements.txt
-python -c "import google.protobuf as p; print(p.__version__)"
-```
-
-Expected: `4.25.8` or another 4.x version. Then install the CLI and re-verify:
+The correct pin for this environment is **`protobuf==6.33.6`**. If the Kaggle
+CLI install perturbs it, restore that version and re-verify.
 
 ```bash
 pip install kaggle
-python -c "import mediapipe; print('mediapipe OK')"
-python -c "import google.protobuf as p; print(p.__version__)"
+pip install "protobuf==6.33.6"   # restore if the CLI install moved it
 ```
 
-Expected: `mediapipe OK` and still a 4.x protobuf. If protobuf jumped to 7.x, run `pip install 'protobuf<5'` and re-verify mediapipe.
+Then verify on a **compute node** — a mediapipe import pulls in TensorFlow and
+is SIGKILLed on a login node (`exit=137`), which looks identical to a genuine
+breakage:
+
+```bash
+srun --partition=short --time=00:15:00 --mem=16G --cpus-per-task=2 \
+  python -c "import google.protobuf as p, mediapipe, torch, kaggle; \
+             print(p.__version__, mediapipe.__version__, torch.__version__)"
+```
+
+Expected: `6.33.6 0.10.33 2.5.1+cu121`.
+
+Kaggle CLI 2.2.4 authenticates from `~/.kaggle/access_token` (a `KGAT_`-prefixed
+token from kaggle.com/settings), not the older `kaggle.json`. Competition rules
+must be accepted on the DFDC page or the API returns 403.
 
 - [ ] **Step 4: Download DFDC Part 0**
 
