@@ -10,6 +10,7 @@ Usage:
 import argparse
 import json
 import logging
+import math
 import time
 from pathlib import Path
 
@@ -97,20 +98,37 @@ def validate(
     criterion: PretrainLoss,
     val_loader: DataLoader,
     device: torch.device,
+    selection_temperature: float = 0.07,
 ) -> dict[str, float]:
     """Run validation and compute average metrics.
+
+    Also computes the loss at a fixed reference temperature, which is what
+    model selection should use. InfoNCE forms logits as similarity / tau, so a
+    learnable tau changes the loss scale as it trains: the same embedding
+    quality yields a larger loss once tau has shrunk. Comparing raw validation
+    loss across epochs therefore rewards early epochs for having a gentler
+    temperature rather than better representations. Recomputing at a fixed tau
+    restores comparability across epochs.
+
+    Selecting on this rather than on sync-score is deliberate. Sync-score is
+    maximised by a collapsed encoder that maps everything close to everything,
+    whereas InfoNCE penalises collapse because the negatives become equally
+    similar.
 
     Args:
         model: SyncGuard model.
         criterion: PretrainLoss instance.
         val_loader: Validation DataLoader.
         device: Torch device.
+        selection_temperature: Fixed tau used for the comparable selection
+            loss. Defaults to the usual InfoNCE initial value.
 
     Returns:
-        Dict with avg_loss, avg_sync_score, temperature.
+        Dict with avg_loss, avg_loss_fixed_tau, avg_sync_score, temperature.
     """
     model.eval()
     total_loss = 0.0
+    total_loss_fixed = 0.0
     total_sync_score = 0.0
     n_batches = 0
 
@@ -136,22 +154,39 @@ def validate(
             # Compute loss — skip queue update during validation
             loss_dict = criterion(v_embeds, a_embeds, mask=mask_aligned, update_queue=False)
 
+            # Same batch, evaluated at a fixed tau so the number is comparable
+            # across epochs. Restore the learned value immediately afterwards.
+            log_tau_param = criterion.infonce.log_temperature
+            saved_log_tau = log_tau_param.data.clone()
+            log_tau_param.data.fill_(math.log(selection_temperature))
+            fixed_dict = criterion(
+                v_embeds, a_embeds, mask=mask_aligned, update_queue=False
+            )
+            log_tau_param.data.copy_(saved_log_tau)
+
             # Compute mean sync-score
             sync_scores = model.compute_sync_scores(v_embeds, a_embeds)
             masked_scores = sync_scores * mask_aligned.float()
             avg_score = masked_scores.sum() / mask_aligned.float().sum().clamp(min=1)
 
             total_loss += loss_dict["loss"].item()
+            total_loss_fixed += fixed_dict["loss"].item()
             total_sync_score += avg_score.item()
             n_batches += 1
 
     model.train()
 
     if n_batches == 0:
-        return {"avg_loss": 0.0, "avg_sync_score": 0.0, "temperature": 0.0}
+        return {
+            "avg_loss": 0.0,
+            "avg_loss_fixed_tau": 0.0,
+            "avg_sync_score": 0.0,
+            "temperature": 0.0,
+        }
 
     return {
         "avg_loss": total_loss / n_batches,
+        "avg_loss_fixed_tau": total_loss_fixed / n_batches,
         "avg_sync_score": total_sync_score / n_batches,
         "temperature": criterion.temperature.item(),
     }
@@ -221,7 +256,9 @@ def train(
         scheduler.load_state_dict(ckpt["scheduler_state_dict"])
         criterion.load_state_dict(ckpt["criterion_state_dict"])
         start_epoch = ckpt["epoch"] + 1
-        best_val_loss = ckpt["val_metrics"].get("avg_loss", float("inf"))
+        best_val_loss = ckpt["val_metrics"].get(
+            "avg_loss_fixed_tau", ckpt["val_metrics"].get("avg_loss", float("inf"))
+        )
         logger.info(f"Resumed from epoch {start_epoch}, best_val_loss={best_val_loss:.4f}")
 
     logger.info(
@@ -345,6 +382,7 @@ def train(
             "train_cmp": avg_train_cmp,
             "train_sync_score": avg_train_sync,
             "val_loss": val_metrics["avg_loss"],
+            "val_loss_fixed_tau": val_metrics.get("avg_loss_fixed_tau"),
             "val_sync_score": val_metrics["avg_sync_score"],
             "temperature": val_metrics["temperature"],
             "lr": current_lr,
@@ -386,8 +424,11 @@ def train(
             )
 
         # Save best checkpoint
-        if val_metrics["avg_loss"] < best_val_loss:
-            best_val_loss = val_metrics["avg_loss"]
+        # Select on the fixed-tau loss: the raw loss is not comparable across
+        # epochs while tau is still training (see validate()).
+        selection_loss = val_metrics.get("avg_loss_fixed_tau", val_metrics["avg_loss"])
+        if selection_loss < best_val_loss:
+            best_val_loss = selection_loss
             save_checkpoint(
                 model, optimizer, scheduler, criterion,
                 epoch, val_metrics,
@@ -395,13 +436,19 @@ def train(
                 config=config,
                 wandb_run_id=wandb.run.id if wandb.run else None,
             )
-            logger.info(f"  New best val_loss: {best_val_loss:.4f}")
+            logger.info(
+                f"  New best val_loss (fixed tau): {best_val_loss:.4f} "
+                f"(raw={val_metrics['avg_loss']:.4f}, "
+                f"sync={val_metrics['avg_sync_score']:.4f})"
+            )
 
         # Save metrics log
         with open(log_path, "w") as f:
             json.dump(history, f, indent=2)
 
-    logger.info(f"Pretraining complete. Best val_loss: {best_val_loss:.4f}")
+    logger.info(
+        f"Pretraining complete. Best val_loss (fixed tau): {best_val_loss:.4f}"
+    )
     wandb.finish()
     return history
 

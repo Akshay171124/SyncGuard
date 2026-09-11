@@ -365,3 +365,66 @@ class TestLossFactories:
         assert isinstance(loss_fn, CombinedLoss)
         assert loss_fn.gamma == 0.5
         assert loss_fn.delta == 1.0
+
+
+class TestFixedTauSelectionMetric:
+    """Model selection must not drift with the learnable temperature.
+
+    InfoNCE forms logits as similarity / tau. As tau trains downward the loss
+    grows for identical embeddings, so selecting "best" on raw validation loss
+    rewards early epochs for a gentler temperature rather than better
+    representations. Observed in the 2026-09-11 pretraining run: val_loss was
+    best at epoch 0 (8.6163) and never beaten, while sync-score climbed from
+    0.43 to 0.88 — so `pretrain_best.pt` held a one-epoch model.
+    """
+
+    def _embeds(self, seed=0):
+        torch.manual_seed(seed)
+        v = torch.nn.functional.normalize(torch.randn(4, 8, 16), dim=-1)
+        a = torch.nn.functional.normalize(torch.randn(4, 8, 16), dim=-1)
+        return v, a
+
+    def _make_criterion(self, tau):
+        """Fresh criterion with a deterministically initialised MoCo queue."""
+        from src.training.losses import PretrainLoss
+        torch.manual_seed(1234)
+        return PretrainLoss(
+            embedding_dim=16, queue_size=64, use_cross_modal=False, temperature=tau
+        )
+
+    def _loss_at_tau(self, tau, v, a):
+        crit = self._make_criterion(tau)
+        with torch.no_grad():
+            return crit(v, a, update_queue=False)["loss"].item()
+
+    def test_raw_loss_changes_with_tau_for_identical_embeddings(self):
+        """The defect itself: same embeddings, different tau, different loss."""
+        v, a = self._embeds()
+        assert self._loss_at_tau(0.07, v, a) != pytest.approx(
+            self._loss_at_tau(0.03, v, a), rel=1e-3
+        )
+
+    def test_fixed_tau_loss_is_stable_across_learned_tau(self):
+        """Overriding log_temperature to a reference value removes the drift."""
+        import math
+
+        v, a = self._embeds()
+        ref = 0.07
+        values = []
+        for learned_tau in (0.07, 0.05, 0.03, 0.02):
+            crit = self._make_criterion(learned_tau)
+            saved = crit.infonce.log_temperature.data.clone()
+            crit.infonce.log_temperature.data.fill_(math.log(ref))
+            with torch.no_grad():
+                values.append(crit(v, a, update_queue=False)["loss"].item())
+            crit.infonce.log_temperature.data.copy_(saved)
+        for val in values[1:]:
+            assert val == pytest.approx(values[0], rel=1e-5)
+
+    def test_validate_reports_both_metrics(self):
+        """validate() must expose the comparable metric for selection."""
+        import inspect
+        from src.training.pretrain import validate
+        src = inspect.getsource(validate)
+        assert "avg_loss_fixed_tau" in src
+        assert "selection_temperature" in src
