@@ -134,7 +134,21 @@ because the config that produced them is gone. Copied to
 Checkpoints: `pretrain_best.pt`, `finetune_best.pt`, `audio_clf_best.pt`,
 `ca_stage1_best.pt`, `ca_stage2_best.pt`.
 
-Evaluation: `eval_fakeavceleb.json`, `eval_celebdf.json`, `eval_dfdc.json`.
+Evaluation: `eval_fakeavceleb.json`, `eval_dfdc.json`.
+
+**CelebDF-v2 is NOT an evaluation set.** Correcting an earlier revision of this
+spec, which listed it as one. CelebDF-v2 videos contain no audio stream at all
+— `ffprobe` reports only `0,mpeg4,video`, where FakeAVCeleb reports
+`1,aac,audio`. The creators omitted audio because the manipulation is purely
+visual. April established this on 2026-03-20 (`lab_notebook.md:708-715`):
+*"not fixable — it's a dataset design limitation, not a preprocessing bug...
+CelebDF-v2 dropped from cross-dataset evaluation. Pivoted to DFDC as our sole
+cross-dataset benchmark."* Re-confirmed empirically on 2026-09-11 when
+preprocessing returned `Success: 0, Failed: 6529` with `error_audio: 6529`.
+
+**Consequence: DFDC is the only cross-dataset benchmark.** It is therefore
+required, not optional, for any zero-shot claim. Section 11's Kaggle download
+is on the critical path for evaluation.
 
 Plots: the ten figures listed under Plotting Standards in `.claude/CLAUDE.md`.
 
@@ -182,7 +196,7 @@ minutes rather than after eight GPU-hours.
 | Gate | Check | Pass condition |
 |---|---|---|
 | G0 | `pytest tests/` | 215 passed, 4 skipped |
-| G1 | Dataset counts | FakeAVCeleb 21,544; AVSpeech 24,760; LRS2 ~96K; DFDC 1,343 |
+| G1 | Dataset counts | FakeAVCeleb 21,544; AVSpeech 24,760; LRS2 96,318 (pretrain split); DFDC 1,343 |
 | G2 | Preprocessing output | Sample has `T` frames, 16 kHz audio, `speech_mask` present |
 | G3 | Pretrain, first 100 steps | Loss not NaN; sync-score not saturating toward 1.0 |
 | G4 | Fine-tune, first 3 epochs | Val AUC not pinned at 0.5 |
@@ -215,8 +229,9 @@ indicates speaker leakage across the train/val split.
 - The AV-HuBERT visual encoder remains randomly initialized, matching what
   April actually ran rather than what its documentation claimed. This is a
   deliberate choice to keep the rebuild attributable; see sections 12 and 13.
-- Evaluation covers FakeAVCeleb, CelebDF-v2, and DFDC. DFDC is re-downloaded
-  from Kaggle; see section 11.
+- Evaluation covers FakeAVCeleb and DFDC only. CelebDF-v2 is excluded because
+  it has no audio track (see section 5). DFDC is re-downloaded from Kaggle;
+  see section 11.
 - **Wav2Vec is frozen during pretraining.** `configs/rebuild_pretrain.yaml` sets
   `audio_encoder.freeze_pretrained: true`. The config was initially copied from
   `default.yaml`, which leaves it unfrozen — the state section 7's G3 gate
