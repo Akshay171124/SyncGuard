@@ -5,6 +5,11 @@ seed: 42
 # Data paths
 data:
   raw_dir: "data/raw"
+  # Drop samples whose frames mostly failed face detection. Undetected
+  # frames are stored as black frames and valid_mask.npy is not consumed
+  # at training time, so such clips are blank video paired with real
+  # audio — a false positive pair for contrastive learning.
+  min_detection_rate: 0.5
   processed_dir: "data/processed"
   features_dir: "data/processed"
   fakeavceleb_dir: "data/raw/FakeAVCeleb"

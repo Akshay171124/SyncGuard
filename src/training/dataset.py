@@ -8,6 +8,7 @@ and fine-tuning phases. Handles:
 - Variable-length collation with padding and masks
 """
 
+import json
 import logging
 import random
 from pathlib import Path
@@ -25,6 +26,42 @@ from src.preprocessing.dataset_loader import (
 from src.augmentation.sbi import SelfBlendedImage, build_sbi
 
 logger = logging.getLogger(__name__)
+
+
+
+def passes_detection_threshold(feature_dir: Path, min_rate: float) -> bool:
+    """Whether a preprocessed sample has enough successfully detected frames.
+
+    Frames where face detection failed are stored as black frames by the
+    preprocessing pipeline (face_detector.py fills them with np.zeros), and the
+    accompanying valid_mask.npy is not consumed at training time. A clip that is
+    mostly black frames paired with real speech audio is a false positive pair
+    for contrastive learning, so such samples are dropped rather than masked.
+
+    Missing or unreadable metadata is treated as passing: absence of evidence is
+    not evidence of a bad sample, and discarding on it would silently shrink the
+    corpus.
+
+    Args:
+        feature_dir: Directory holding the sample's preprocessed artefacts.
+        min_rate: Minimum acceptable detection_rate. Values <= 0 disable the
+            check entirely.
+
+    Returns:
+        True if the sample should be kept.
+    """
+    if min_rate <= 0:
+        return True
+    meta_path = feature_dir / "metadata.json"
+    if not meta_path.exists():
+        return True
+    try:
+        rate = json.loads(meta_path.read_text()).get("detection_rate")
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return True
+    if rate is None:
+        return True
+    return float(rate) >= min_rate
 
 
 @dataclass
@@ -84,6 +121,9 @@ class SyncGuardDataset(Dataset):
         config: dict = None,
     ):
         self.features_dir = Path(features_dir)
+        self.min_detection_rate = float(
+            (config or {}).get("data", {}).get("min_detection_rate", 0.0)
+        )
         self.max_frames = max_frames
         self.max_audio_samples = max_audio_samples
         self.hard_negative_ratio = hard_negative_ratio
@@ -106,8 +146,10 @@ class SyncGuardDataset(Dataset):
             self.visual_input_size = 96
             self.visual_channels = 1
 
-        # Filter out samples without preprocessed features
+        # Filter out unusable samples
         valid_samples = []
+        n_missing = 0
+        n_low_detection = 0
         for s in samples:
             video_stem = Path(s.video_path).stem
             # LRS2 uses speaker_id_video_stem as directory name
@@ -117,12 +159,19 @@ class SyncGuardDataset(Dataset):
                 feat_dir = self.features_dir / s.dataset / s.category / video_stem
             has_crops = (feat_dir / "mouth_crops.npy").exists()
             has_audio = (feat_dir / "audio.wav").exists() or (feat_dir / "audio.npy").exists()
-            if has_crops and has_audio:
-                valid_samples.append(s)
-        if len(valid_samples) < len(samples):
+            if not (has_crops and has_audio):
+                n_missing += 1
+                continue
+            if not passes_detection_threshold(feat_dir, self.min_detection_rate):
+                n_low_detection += 1
+                continue
+            valid_samples.append(s)
+        if n_missing:
+            logger.warning(f"Filtered {n_missing} samples missing preprocessed features")
+        if n_low_detection:
             logger.warning(
-                f"Filtered {len(samples) - len(valid_samples)} samples "
-                f"missing preprocessed features"
+                f"Filtered {n_low_detection} samples with detection_rate < "
+                f"{self.min_detection_rate} (mostly-black frames)"
             )
         self.samples = valid_samples
 

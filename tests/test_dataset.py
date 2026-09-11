@@ -8,6 +8,7 @@ Tests verify:
 - Edge cases: single sample, uniform lengths
 """
 
+import json
 import numpy as np
 import pytest
 import torch
@@ -163,3 +164,59 @@ class TestCollateEdgeCases:
         batch = [_make_sample(30, 16000), _make_sample(40, 16000)]
         result = collate_syncguard(batch)
         assert len(result.sample_ids) == 2
+
+
+class TestDetectionRateFilter:
+    """Samples that are mostly black frames must not reach contrastive training.
+
+    Preprocessing stores undetected frames as np.zeros (face_detector.py) and
+    valid_mask.npy is never consumed at training time, so a clip with a low
+    detection_rate is mostly blank video paired with real speech audio — a
+    false positive pair for InfoNCE. Measured on the restored corpus: 30.5% of
+    AVSpeech and 4.8% of LRS2 samples fell below a 0.5 detection rate.
+    """
+
+    def _sample_dir(self, tmp_path, rate=None, write_meta=True, body=None):
+        d = tmp_path / "sample"
+        d.mkdir(exist_ok=True)
+        if write_meta:
+            if body is not None:
+                (d / "metadata.json").write_text(body)
+            else:
+                (d / "metadata.json").write_text(json.dumps({"detection_rate": rate}))
+        return d
+
+    def test_keeps_sample_above_threshold(self, tmp_path):
+        from src.training.dataset import passes_detection_threshold
+        d = self._sample_dir(tmp_path, rate=0.95)
+        assert passes_detection_threshold(d, 0.5) is True
+
+    def test_drops_sample_below_threshold(self, tmp_path):
+        from src.training.dataset import passes_detection_threshold
+        d = self._sample_dir(tmp_path, rate=0.043)
+        assert passes_detection_threshold(d, 0.5) is False
+
+    def test_boundary_is_inclusive(self, tmp_path):
+        from src.training.dataset import passes_detection_threshold
+        d = self._sample_dir(tmp_path, rate=0.5)
+        assert passes_detection_threshold(d, 0.5) is True
+
+    def test_threshold_zero_disables_check(self, tmp_path):
+        from src.training.dataset import passes_detection_threshold
+        d = self._sample_dir(tmp_path, rate=0.0)
+        assert passes_detection_threshold(d, 0.0) is True
+
+    def test_missing_metadata_passes(self, tmp_path):
+        from src.training.dataset import passes_detection_threshold
+        d = self._sample_dir(tmp_path, write_meta=False)
+        assert passes_detection_threshold(d, 0.5) is True
+
+    def test_corrupt_metadata_passes(self, tmp_path):
+        from src.training.dataset import passes_detection_threshold
+        d = self._sample_dir(tmp_path, body="{not valid json")
+        assert passes_detection_threshold(d, 0.5) is True
+
+    def test_absent_detection_rate_key_passes(self, tmp_path):
+        from src.training.dataset import passes_detection_threshold
+        d = self._sample_dir(tmp_path, body=json.dumps({"num_frames": 100}))
+        assert passes_detection_threshold(d, 0.5) is True
