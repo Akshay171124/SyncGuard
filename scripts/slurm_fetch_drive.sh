@@ -25,7 +25,7 @@ for f in "FakeAVCeleb_v1.2.zip" "Celeb DF (v2).zip" "lrs2_v1.tar"; do
 done
 
 echo "=== $(date +%H:%M:%S) fetching AVSpeech (24,766 files)"
-rclone copy "$SRC/SyncGuard/data/raw/AVSpeech" "$DEST/avspeech" $RC_OPTS
+rclone copy "$SRC/SyncGuard/data/raw/AVSpeech" "$DEST/AVSpeech" $RC_OPTS
 echo "    exit=$?"
 
 echo "=== done $(date +%H:%M:%S)"
