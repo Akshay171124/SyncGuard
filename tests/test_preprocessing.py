@@ -237,3 +237,40 @@ class TestEARComputation:
         detector = FaceDetector.__new__(FaceDetector)
         ear = detector.compute_ear(landmarks, h, w)
         assert ear == 0.0
+
+
+class TestPreprocessingSummary:
+    """A sample with any error is unusable and must not count as a success.
+
+    The original counter checked only "error" and "error_video". A run with
+    ffmpeg missing therefore reported "Success: N, Failed: 0" while every
+    sample carried error_audio and had no audio.wav — useless for an
+    audio-visual sync model, and undetected until much later.
+    """
+
+    def test_clean_results_all_succeed(self):
+        from scripts.preprocess_dataset import summarize_results
+        ok, fail, breakdown = summarize_results([{"video_id": "a"}, {"video_id": "b"}])
+        assert (ok, fail, breakdown) == (2, 0, {})
+
+    def test_audio_error_counts_as_failure(self):
+        from scripts.preprocess_dataset import summarize_results
+        ok, fail, breakdown = summarize_results([
+            {"video_id": "a", "error_audio": "ffmpeg missing"},
+            {"video_id": "b"},
+        ])
+        assert ok == 1
+        assert fail == 1
+        assert breakdown == {"error_audio": 1}
+
+    def test_video_error_counts_as_failure(self):
+        from scripts.preprocess_dataset import summarize_results
+        ok, fail, _ = summarize_results([{"video_id": "a", "error_video": "no face"}])
+        assert (ok, fail) == (0, 1)
+
+    def test_breakdown_tallies_each_mode(self):
+        from scripts.preprocess_dataset import summarize_results
+        _, _, breakdown = summarize_results([
+            {"error_audio": "x"}, {"error_audio": "y"}, {"error_video": "z"}, {},
+        ])
+        assert breakdown == {"error_audio": 2, "error_video": 1}

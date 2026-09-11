@@ -18,6 +18,31 @@ from src.preprocessing.dataset_loader import get_dataset_loader
 from src.preprocessing.pipeline import PreprocessingPipeline
 
 
+def summarize_results(results: list[dict]) -> tuple[int, int, dict]:
+    """Count usable samples and tally the failure modes.
+
+    A sample counts as successful only if it carries no error key at all.
+    The previous check looked at "error" and "error_video" but not
+    "error_audio", so a run with ffmpeg missing reported 100% success while
+    producing samples with no audio — useless for audio-visual sync training,
+    and invisible until training failed much later.
+
+    Args:
+        results: Per-sample result dicts from the preprocessing pipeline.
+
+    Returns:
+        Tuple of (successes, failures, {error_key: count}).
+    """
+    from collections import Counter
+
+    def errors(r: dict) -> list[str]:
+        return sorted(k for k in r if k.startswith("error"))
+
+    n_success = sum(1 for r in results if not errors(r))
+    breakdown = Counter(k for r in results for k in errors(r))
+    return n_success, len(results) - n_success, dict(breakdown)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Preprocess dataset for SyncGuard")
     parser.add_argument(
@@ -99,9 +124,10 @@ def main():
     pipeline.close()
 
     # Summary
-    n_success = sum(1 for r in results if "error" not in r and "error_video" not in r)
-    n_fail = len(results) - n_success
+    n_success, n_fail, breakdown = summarize_results(results)
     logger.info(f"Done. Success: {n_success}, Failed: {n_fail}")
+    for key, count in sorted(breakdown.items()):
+        logger.warning(f"  {key}: {count} samples")
 
 
 if __name__ == "__main__":
