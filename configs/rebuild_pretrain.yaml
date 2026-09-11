@@ -58,7 +58,11 @@ model:
 training:
   # Phase 1: Contrastive pretraining
   pretrain:
-    epochs: 20
+    # Raised from 20: the 2026-09-11 run's val sync-score was still climbing
+    # at cutoff (0.8761 -> 0.8950 -> 0.9034 over the last three epochs) while
+    # cosine had already decayed lr to ~3e-06. It stopped on schedule, not on
+    # convergence, and fell short of April's 0.978.
+    epochs: 40
     batch_size: 32
     lr: 1.0e-4
     weight_decay: 1.0e-5
@@ -66,7 +70,11 @@ training:
     warmup_epochs: 2
     moco_queue_size: 4096
     temperature: 0.07
-    temperature_range: [0.03, 0.5]
+    # Floor lowered from 0.03 to match .claude/CLAUDE.md pitfall #5. The
+    # 2026-09-11 run pinned tau at exactly 0.0300 from epoch 12 onward —
+    # clamped against the floor, unable to sharpen the contrastive
+    # objective for the final 8 epochs.
+    temperature_range: [0.01, 0.5]
     # Cross-modal prediction (AVFF-style)
     cross_modal_prediction: true
     cmp_weight: 100.0    # Weight for CMP loss relative to InfoNCE (scaled to match InfoNCE magnitude)
