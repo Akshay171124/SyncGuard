@@ -35,7 +35,7 @@ fi
 echo "ffmpeg: $(command -v ffmpeg)"
 
 cd /scratch/$USER/SyncGuard || exit 1
-export PYTHONPATH=/scratch/$USER/SyncGuard:$PYTHONPATH
+export PYTHONPATH="/scratch/$USER/SyncGuard:${PYTHONPATH:-}"   # :- required under set -u
 mkdir -p outputs/logs data/processed
 
 : "${DATASET:?DATASET must be set, e.g. --export=ALL,DATASET=lrs2}"
