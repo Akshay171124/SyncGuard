@@ -244,3 +244,55 @@ class TestGetDatasetLoader:
         """Unknown dataset name raises ValueError."""
         with pytest.raises(ValueError, match="Unknown dataset"):
             get_dataset_loader("imagenet", str(tmp_path))
+
+
+class TestLRS2SpeakerIdUniqueness:
+    """Regression tests for the LRS2 unique-ID collision.
+
+    LRS2 reuses filenames across speakers (every speaker has 00001.mp4). The
+    March 2026 run silently processed only 225 samples out of 96K because every
+    sample resolved to the same output directory, and reported no errors. The
+    speaker id must come from the video's immediate parent directory, not from
+    the first path component, which is a constant like "mvlrs_v1".
+    """
+
+    def _make_tree(self, tmp_path):
+        """Build the real LRS2 layout: lrs2/mvlrs_v1/main/<speaker>/<file>.mp4"""
+        root = tmp_path / "lrs2"
+        for speaker in ("5535415699068794046", "6330311066473698535"):
+            d = root / "mvlrs_v1" / "main" / speaker
+            d.mkdir(parents=True)
+            for name in ("00001.mp4", "00002.mp4"):
+                (d / name).touch()
+        return root
+
+    def test_speaker_id_is_the_parent_directory(self, tmp_path):
+        from src.preprocessing.dataset_loader import LRS2Loader
+
+        root = self._make_tree(tmp_path)
+        samples = LRS2Loader(str(root)).load_samples()
+        speaker_ids = {s.speaker_id for s in samples}
+        assert speaker_ids == {"5535415699068794046", "6330311066473698535"}
+        assert "mvlrs_v1" not in speaker_ids
+
+    def test_unique_ids_do_not_collide_across_speakers(self, tmp_path):
+        from src.preprocessing.dataset_loader import LRS2Loader
+        from src.preprocessing.pipeline import PreprocessingPipeline
+
+        root = self._make_tree(tmp_path)
+        samples = LRS2Loader(str(root)).load_samples()
+        assert len(samples) == 4
+
+        get_id = PreprocessingPipeline._get_unique_id
+        ids = [get_id(None, s) for s in samples]
+        assert len(set(ids)) == 4, f"output-dir collision: {ids}"
+
+    def test_flat_layout_still_works(self, tmp_path):
+        from src.preprocessing.dataset_loader import LRS2Loader
+
+        root = tmp_path / "lrs2_flat"
+        root.mkdir()
+        (root / "00001.mp4").touch()
+        samples = LRS2Loader(str(root)).load_samples()
+        assert len(samples) == 1
+        assert samples[0].speaker_id == "00001"

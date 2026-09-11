@@ -328,10 +328,15 @@ class LRS2Loader:
         video_files = sorted(self.root.rglob("*.mp4"))
 
         for video_file in video_files:
-            # Extract speaker ID from parent directory
+            # Speaker ID is the video's immediate parent directory.
+            # LRS2 reuses filenames across speakers (every speaker has a
+            # 00001.mp4). Using the first path component instead yields a
+            # constant like "mvlrs_v1" for the whole dataset, collapsing every
+            # speaker's 00001.mp4 onto one output directory — the March 2026
+            # run silently kept 225 samples out of 96K that way.
             rel = video_file.relative_to(self.root)
             parts = rel.parts
-            speaker_id = parts[0] if len(parts) >= 2 else video_file.stem
+            speaker_id = video_file.parent.name if len(parts) >= 2 else video_file.stem
 
             samples.append(VideoSample(
                 video_path=str(video_file),
